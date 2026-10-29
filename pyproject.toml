@@ -1,0 +1,24 @@
+[project]
+name = "cx2iceberg"
+version = "0.1.0"
+description = "Catena-X submodel JSON -> Apache Iceberg tables in Amazon Athena, driven by YAML rules"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6", "pandas>=2"]
+
+[project.optional-dependencies]
+aws = ["awswrangler>=3.9", "boto3"]
+parquet = ["pyarrow>=14"]
+dev = ["pytest>=8", "pyarrow>=14", "awswrangler>=3.9"]
+
+[project.scripts]
+cx2iceberg = "cx2iceberg.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["cx2iceberg", "cx2iceberg.studio"]
+
+[tool.setuptools.package-data]
+"cx2iceberg.studio" = ["static/*"]

@@ -1,0 +1,52 @@
+# Configuração gerada automaticamente por `cx2iceberg init`.
+# Reveja nomes, tipos e chaves; remova as colunas que não interessam.
+# Números sem tipo no schema são sugeridos como double (JSON não distingue 1 de 1.0).
+# Referência completa: README.md
+target:
+  database: ${ATHENA_DATABASE:-catenax}
+  location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}
+  temp_path: ${ATHENA_TEMP:-s3://my-bucket/tmp}
+  workgroup: ${ATHENA_WORKGROUP:-primary}
+  region: ${AWS_REGION:-eu-west-1}
+input:
+  semantic_id: urn:samm:io.catenax.pcf:9.0.0#Pcf
+defaults:
+  metadata_columns: true
+  on_error: fail
+submodels:
+- name: pcf9
+  match:
+    semantic_id: urn:samm:io.catenax.pcf:9.0.0#Pcf
+  unwrap:
+    all: true
+    except:
+    - attestationOfConformance
+    - pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.precedingPfIds
+  tables:
+  - name: pcf9
+    mode: merge
+    keys:
+    - pcf9_id
+    columns:
+      pcf9_id: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      scope_of_pcf_form:
+        path: scopeOfPcfForm
+        type: struct<spec_version:string,partial_full_pcf:string>
+      company_and_product_information:
+        path: companyAndProductInformation
+        type: struct<company_information:struct<company_name:string,company_ids:array<string>>,product_information:struct<product_name_company:string,product_ids:array<string>,declared_unit_of_measurement:string,declared_unit_amount:double,product_mass_per_declared_unit:double,product_classifications:array<string>,product_description:string>>
+      pcf_assessment_and_methodology:
+        path: pcfAssessmentAndMethodology
+        type: struct<data_sources_and_quality:struct<primary_data_share:double,secondary_emission_factor_sources:array<string>,technological_dqr:double,temporal_dqr:double,geographical_dqr:double>,pcf_assessment_information:struct<technology:struct<ccs_technological_co2_capture_included:boolean,boundary_processes_description:string>,id_and_version:struct<id:string,version:double,status:string,retro_or_prospective_pcf_type:string,preceding_pf_ids:array<json>>,boundary_specifications:struct<exempted_emissions_percent:double,exempted_emissions_description:string>,geography:struct<geography_region_or_subregion:string,geography_country_subdivision:string,geography_country:string>,time:struct<reference_period_start:timestamp,reference_period_end:timestamp,created:timestamp,validity_period_end:timestamp,validity_period_start:timestamp>>,verification_and_certification_shares:struct<program_certification_share:double,product_verification_share3rd_party:double,product_verification_share2nd_party:double,product_verification_share1st_party:double>,pcf_methodology:struct<mass_balancing_information:struct<mass_balancing_used:boolean,free_attribution_in_mass_balancing:string,mass_balancing_certificate_scheme:string>,standards:struct<cross_sectoral_standards:array<string>,product_or_sector_specific_rules:array<string>>,gwp_characterization_factor_details:struct<ipcc_characterization_factors:string>,allocation_in_foreground:struct<allocation_waste_incineration:string,allocation_rules_description:string,allocation_recycled_carbon:string>>>
+      general:
+        path: general
+        type: struct<comment:string,pcf_legal_statement:string>
+      carbon_content:
+        path: carbonContent
+        type: struct<carbon_content_total:double,fossil_carbon_content:double,biogenic_carbon_content:double,packaging_biogenic_carbon_content:double,recycled_carbon_content:double>
+      product_life_cycle_stages_and_emissions:
+        path: productLifeCycleStagesAndEmissions
+        type: struct<production_stage:struct<pcf_including_biogenic_uptake:double,pcf_excluding_biogenic_uptake:double,fossil_ghg_emissions:double,biogenic_non_co2_emissions:double,biogenic_co2_uptake:double,land_use_change_ghg_emissions:double,land_management_biogenic_co2_emissions:double,packaging_land_management_biogenic_co2_emissions:double,land_management_biogenic_co2_removals:double,aircraft_ghg_emissions:double>,distribution_stage:struct<distribution_stage_included:boolean,distribution_stage_pcf_including_biogenic_uptake:double,distribution_stage_pcf_excluding_biogenic_uptake:double,distribution_stage_fossil_ghg_emissions:double,distribution_stage_biogenic_non_co2_emissions:double,distribution_stage_biogenic_co2_uptake:double,distribution_stage_land_use_change_ghg_emissions:double,distribution_stage_land_management_biogenic_co2_emissions:double,distribution_stage_land_management_biogenic_co2_removals:double,distribution_stage_aircraft_ghg_emissions:double>,packaging_stage:struct<packaging_emissions_included:boolean,packaging_pcf_including_biogenic_uptake:double,packaging_pcf_excluding_biogenic_uptake:double,packaging_fossil_ghg_emissions:double,packaging_biogenic_non_co2_emissions:double,packaging_biogenic_co2_uptake:double,packaging_land_use_change_ghg_emissions:double,packaging_land_management_biogenic_co2_emissions:double,packaging_land_management_biogenic_co2_removals:double,packaging_aircraft_ghg_emissions:double>>
+      attestation_of_conformance:
+        path: attestationOfConformance
+        type: array<struct<attestation_type:string,standard_name:string,attestation_standard:string,attestation_of_conformance_id:string,provider_name:string,attestation_of_conformance_link:string,provider_id:string,completed_at:timestamp>>

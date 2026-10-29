@@ -1,0 +1,335 @@
+# Configuração gerada automaticamente por `cx2iceberg init`.
+# Reveja nomes, tipos e chaves; remova as colunas que não interessam.
+# Números sem tipo no schema são sugeridos como double (JSON não distingue 1 de 1.0).
+# Referência completa: README.md
+target:
+  database: ${ATHENA_DATABASE:-catenax}
+  location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}
+  temp_path: ${ATHENA_TEMP:-s3://my-bucket/tmp}
+  workgroup: ${ATHENA_WORKGROUP:-primary}
+  region: ${AWS_REGION:-eu-west-1}
+input:
+  semantic_id: urn:samm:io.catenax.pcf:9.0.0#Pcf
+defaults:
+  metadata_columns: true
+  on_error: fail
+submodels:
+- name: pcf9
+  match:
+    semantic_id: urn:samm:io.catenax.pcf:9.0.0#Pcf
+  unwrap:
+    all: true
+    except:
+    - attestationOfConformance
+    - pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.precedingPfIds
+  tables:
+  - name: pcf9
+    mode: merge
+    keys:
+    - pcf9_id
+    columns:
+      pcf9_id: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      spec_version: scopeOfPcfForm.specVersion
+      partial_full_pcf: scopeOfPcfForm.partialFullPcf
+      company_name: companyAndProductInformation.companyInformation.companyName
+      product_name_company: companyAndProductInformation.productInformation.productNameCompany
+      declared_unit_of_measurement: companyAndProductInformation.productInformation.declaredUnitOfMeasurement
+      declared_unit_amount:
+        path: companyAndProductInformation.productInformation.declaredUnitAmount
+        type: double
+      product_mass_per_declared_unit:
+        path: companyAndProductInformation.productInformation.productMassPerDeclaredUnit
+        type: double
+      product_description: companyAndProductInformation.productInformation.productDescription
+      primary_data_share:
+        path: pcfAssessmentAndMethodology.dataSourcesAndQuality.primaryDataShare
+        type: double
+      technological_dqr:
+        path: pcfAssessmentAndMethodology.dataSourcesAndQuality.technologicalDQR
+        type: double
+      temporal_dqr:
+        path: pcfAssessmentAndMethodology.dataSourcesAndQuality.temporalDQR
+        type: double
+      geographical_dqr:
+        path: pcfAssessmentAndMethodology.dataSourcesAndQuality.geographicalDQR
+        type: double
+      ccs_technological_co2_capture_included:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.technology.ccsTechnologicalCO2CaptureIncluded
+        type: boolean
+      boundary_processes_description: pcfAssessmentAndMethodology.pcfAssessmentInformation.technology.boundaryProcessesDescription
+      version:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.version
+        type: double
+      status: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.status
+      retro_or_prospective_pcf_type: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.retroOrProspectivePcfType
+      exempted_emissions_percent:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.boundarySpecifications.exemptedEmissionsPercent
+        type: double
+      exempted_emissions_description: pcfAssessmentAndMethodology.pcfAssessmentInformation.boundarySpecifications.exemptedEmissionsDescription
+      geography_region_or_subregion: pcfAssessmentAndMethodology.pcfAssessmentInformation.geography.geographyRegionOrSubregion
+      geography_country_subdivision: pcfAssessmentAndMethodology.pcfAssessmentInformation.geography.geographyCountrySubdivision
+      geography_country: pcfAssessmentAndMethodology.pcfAssessmentInformation.geography.geographyCountry
+      reference_period_start:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.referencePeriodStart
+        type: timestamp
+      reference_period_end:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.referencePeriodEnd
+        type: timestamp
+      created:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.created
+        type: timestamp
+      validity_period_end:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.validityPeriodEnd
+        type: timestamp
+      validity_period_start:
+        path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.validityPeriodStart
+        type: timestamp
+      program_certification_share:
+        path: pcfAssessmentAndMethodology.verificationAndCertificationShares.programCertificationShare
+        type: double
+      product_verification_share3rd_party:
+        path: pcfAssessmentAndMethodology.verificationAndCertificationShares.productVerificationShare3rdParty
+        type: double
+      product_verification_share2nd_party:
+        path: pcfAssessmentAndMethodology.verificationAndCertificationShares.productVerificationShare2ndParty
+        type: double
+      product_verification_share1st_party:
+        path: pcfAssessmentAndMethodology.verificationAndCertificationShares.productVerificationShare1stParty
+        type: double
+      mass_balancing_used:
+        path: pcfAssessmentAndMethodology.pcfMethodology.massBalancingInformation.massBalancingUsed
+        type: boolean
+      free_attribution_in_mass_balancing: pcfAssessmentAndMethodology.pcfMethodology.massBalancingInformation.freeAttributionInMassBalancing
+      mass_balancing_certificate_scheme: pcfAssessmentAndMethodology.pcfMethodology.massBalancingInformation.massBalancingCertificateScheme
+      ipcc_characterization_factors: pcfAssessmentAndMethodology.pcfMethodology.gwpCharacterizationFactorDetails.ipccCharacterizationFactors
+      allocation_waste_incineration: pcfAssessmentAndMethodology.pcfMethodology.allocationInForeground.allocationWasteIncineration
+      allocation_rules_description: pcfAssessmentAndMethodology.pcfMethodology.allocationInForeground.allocationRulesDescription
+      allocation_recycled_carbon: pcfAssessmentAndMethodology.pcfMethodology.allocationInForeground.allocationRecycledCarbon
+      comment: general.comment
+      pcf_legal_statement: general.pcfLegalStatement
+      carbon_content_total:
+        path: carbonContent.carbonContentTotal
+        type: double
+      fossil_carbon_content:
+        path: carbonContent.fossilCarbonContent
+        type: double
+      biogenic_carbon_content:
+        path: carbonContent.biogenicCarbonContent
+        type: double
+      packaging_biogenic_carbon_content:
+        path: carbonContent.packagingBiogenicCarbonContent
+        type: double
+      recycled_carbon_content:
+        path: carbonContent.recycledCarbonContent
+        type: double
+      pcf_including_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.productionStage.pcfIncludingBiogenicUptake
+        type: double
+      pcf_excluding_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.productionStage.pcfExcludingBiogenicUptake
+        type: double
+      fossil_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.fossilGhgEmissions
+        type: double
+      biogenic_non_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.biogenicNonCO2Emissions
+        type: double
+      biogenic_co2_uptake:
+        path: productLifeCycleStagesAndEmissions.productionStage.biogenicCO2Uptake
+        type: double
+      land_use_change_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.landUseChangeGhgEmissions
+        type: double
+      land_management_biogenic_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.landManagementBiogenicCO2Emissions
+        type: double
+      production_stage_packaging_land_management_biogenic_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.packagingLandManagementBiogenicCO2Emissions
+        type: double
+      land_management_biogenic_co2_removals:
+        path: productLifeCycleStagesAndEmissions.productionStage.landManagementBiogenicCO2Removals
+        type: double
+      aircraft_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.productionStage.aircraftGhgEmissions
+        type: double
+      distribution_stage_included:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageIncluded
+        type: boolean
+      distribution_stage_pcf_including_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStagePcfIncludingBiogenicUptake
+        type: double
+      distribution_stage_pcf_excluding_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStagePcfExcludingBiogenicUptake
+        type: double
+      distribution_stage_fossil_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageFossilGhgEmissions
+        type: double
+      distribution_stage_biogenic_non_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageBiogenicNonCO2Emissions
+        type: double
+      distribution_stage_biogenic_co2_uptake:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageBiogenicCO2Uptake
+        type: double
+      distribution_stage_land_use_change_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageLandUseChangeGhgEmissions
+        type: double
+      distribution_stage_land_management_biogenic_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageLandManagementBiogenicCO2Emissions
+        type: double
+      distribution_stage_land_management_biogenic_co2_removals:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageLandManagementBiogenicCO2Removals
+        type: double
+      distribution_stage_aircraft_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.distributionStage.distributionStageAircraftGhgEmissions
+        type: double
+      packaging_emissions_included:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingEmissionsIncluded
+        type: boolean
+      packaging_pcf_including_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingPcfIncludingBiogenicUptake
+        type: double
+      packaging_pcf_excluding_biogenic_uptake:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingPcfExcludingBiogenicUptake
+        type: double
+      packaging_fossil_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingFossilGhgEmissions
+        type: double
+      packaging_biogenic_non_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingBiogenicNonCO2Emissions
+        type: double
+      packaging_biogenic_co2_uptake:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingBiogenicCO2Uptake
+        type: double
+      packaging_land_use_change_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingLandUseChangeGhgEmissions
+        type: double
+      packaging_stage_packaging_land_management_biogenic_co2_emissions:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingLandManagementBiogenicCO2Emissions
+        type: double
+      packaging_land_management_biogenic_co2_removals:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingLandManagementBiogenicCO2Removals
+        type: double
+      packaging_aircraft_ghg_emissions:
+        path: productLifeCycleStagesAndEmissions.packagingStage.packagingAircraftGhgEmissions
+        type: double
+  - name: pcf9_company_ids
+    explode: companyAndProductInformation.companyInformation.companyIds
+    keys:
+    - pcf9_id
+    - company_ids_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      company_ids_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_product_ids
+    explode: companyAndProductInformation.productInformation.productIds
+    keys:
+    - pcf9_id
+    - product_ids_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      product_ids_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_product_classifications
+    explode: companyAndProductInformation.productInformation.productClassifications
+    keys:
+    - pcf9_id
+    - product_classifications_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      product_classifications_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_secondary_emission_factor_sources
+    explode: pcfAssessmentAndMethodology.dataSourcesAndQuality.secondaryEmissionFactorSources
+    keys:
+    - pcf9_id
+    - secondary_emission_factor_sources_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      secondary_emission_factor_sources_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_preceding_pf_ids
+    explode: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.precedingPfIds
+    keys:
+    - pcf9_id
+    - preceding_pf_ids_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      preceding_pf_ids_idx:
+        path: $index
+        type: int
+    auto: true
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_cross_sectoral_standards
+    explode: pcfAssessmentAndMethodology.pcfMethodology.standards.crossSectoralStandards
+    keys:
+    - pcf9_id
+    - cross_sectoral_standards_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      cross_sectoral_standards_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_product_or_sector_specific_rules
+    explode: pcfAssessmentAndMethodology.pcfMethodology.standards.productOrSectorSpecificRules
+    keys:
+    - pcf9_id
+    - product_or_sector_specific_rules_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      product_or_sector_specific_rules_idx:
+        path: $index
+        type: int
+      value: $item
+    mode: append
+    replace_by:
+    - pcf9_id
+  - name: pcf9_attestation_of_conformance
+    explode: attestationOfConformance
+    keys:
+    - pcf9_id
+    - attestation_of_conformance_idx
+    columns:
+      pcf9_id: $root.pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+      attestation_of_conformance_idx:
+        path: $index
+        type: int
+      attestation_type: attestationType
+      standard_name: standardName
+      attestation_standard: attestationStandard
+      attestation_of_conformance_id: attestationOfConformanceId
+      provider_name: providerName
+      attestation_of_conformance_link: attestationOfConformanceLink
+      provider_id: providerId
+      completed_at:
+        path: completedAt
+        type: timestamp
+    mode: append
+    replace_by:
+    - pcf9_id

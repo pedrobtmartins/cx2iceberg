@@ -1,0 +1,20 @@
+{
+  "catenaXId": "urn:uuid:580d3adf-1981-44a0-a214-13d6ceed9379",
+  "childItems": [
+    {
+      "catenaXId": "urn:uuid:c7a2b803-f1b9-4ae1-a1a5-6b1ed1e6a0f1",
+      "quantity": {"value": 2500, "unit": "unit:gram"},
+      "hasAlternatives": false,
+      "createdOn": "2022-02-03T14:48:54.709Z",
+      "lastModifiedOn": "2022-02-03T14:48:54.709Z",
+      "businessPartner": "BPNL50096894aNXY"
+    },
+    {
+      "catenaXId": "urn:uuid:0b8d6a2e-9f9a-4a7c-8f3e-1d2c3b4a5e6f",
+      "quantity": {"value": 4, "unit": "unit:piece"},
+      "hasAlternatives": true,
+      "createdOn": "2022-02-03T14:48:54.709Z",
+      "businessPartner": "BPNL00000003CML1"
+    }
+  ]
+}

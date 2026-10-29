@@ -1,0 +1,37 @@
+[
+  {
+    "catenaXId": "urn:uuid:580d3adf-1981-44a0-a214-13d6ceed9379",
+    "localIdentifiers": [
+      {"key": "partInstanceId", "value": "SN12345678"},
+      {"key": "manufacturerId", "value": "BPNL7588787849VQ"},
+      {"key": "van", "value": "OEM-A-F8LM95T92WJ9KNDD3HA5P"}
+    ],
+    "manufacturingInformation": {
+      "date": "2022-02-04T14:48:54Z",
+      "country": "DEU",
+      "sites": [{"catenaXsiteId": "BPNS1234567890ZZ", "function": "production"}]
+    },
+    "partTypeInformation": {
+      "manufacturerPartId": "123-0.740-3434-A",
+      "customerPartId": "PRT-12345",
+      "nameAtManufacturer": "Mirror left",
+      "nameAtCustomer": "side element A",
+      "partClassification": [
+        {"classificationStandard": "GIN 20510-21513", "classificationID": "1004712", "classificationDescription": "Generic standard for classification of parts in the automotive industry."}
+      ]
+    }
+  },
+  {
+    "catenaXId": "urn:uuid:7a2c1f0e-0b7e-4f8e-9a51-2f3b9c0d1e22",
+    "localIdentifiers": [
+      {"key": "partInstanceId", "value": "SN87654321"},
+      {"key": "manufacturerId", "value": "BPNL7588787849VQ"}
+    ],
+    "manufacturingInformation": {"date": "2023-07-11T08:00:00+02:00", "country": "PRT", "sites": []},
+    "partTypeInformation": {
+      "manufacturerPartId": "999-1.000-0001-B",
+      "nameAtManufacturer": "Mirror right",
+      "partClassification": []
+    }
+  }
+]

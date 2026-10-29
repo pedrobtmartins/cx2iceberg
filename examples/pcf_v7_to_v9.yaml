@@ -1,0 +1,154 @@
+# Migração PCF 7.0.0 -> colunas PCF 9.0.0, com PCF 9.0.0 a entrar na mesma tabela.
+# Um exemplo de cada tipo de transformação de um mapping de versões (os números [n] repetem-se nos dois submodelos).
+#
+#   cx2iceberg run -c examples/pcf_v7_to_v9.yaml examples/data/pcf_7.json examples/data/pcf_9.json --dry-run
+
+target:
+  database: ${ATHENA_DATABASE:-catenax}
+  location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}
+  temp_path: ${ATHENA_TEMP:-s3://my-bucket/tmp}
+  workgroup: ${ATHENA_WORKGROUP:-primary}
+  region: ${AWS_REGION:-eu-west-1}
+
+defaults:
+  metadata_columns: [source_file, ingested_at]
+  mode: merge
+  keys: [id, version]
+
+submodels:
+
+  # ------------------------------------------------------------------ PCF 7.0.0 (migrado)
+  - name: pcf_v7
+    match:                                        # [15] várias versões para a mesma tabela:
+      any:                                        #      reconhece a versão pelo semantic id ou pelo próprio payload
+        - {semantic_id: "urn:samm:io.catenax.pcf:7.*"}
+        - {where: {path: specVersion, op: regex, value: "version:7\\."}}
+    document_id:                                  # UUID em todas as tabelas; o mesmo PCF (id + version) dá o
+      column: pcf_uuid                            # mesmo UUID venha em v7 ou em v9
+      from: [id, version]
+    tables:
+      - name: pcf
+        columns:
+          id: id
+          version: version ::int
+          source_model: {const: "7.0.0"}
+
+          # [1] renomear campo
+          declared_unit_of_measurement: pcf.declaredUnit
+          declared_unit_amount: pcf.unitaryProductAmount ::double
+
+          # [2] mudar de nível: no v7 está em pcf.dataQualityRating, no v9 em dataSourcesAndQuality
+          technological_dqr: pcf.dataQualityRating.technologicalDQR ::double
+
+          # [3] nomes alternativos na origem (o primeiro que existir)
+          fossil_carbon_content: {paths: [pcf.fossilCarbonContent, pcf.extWBCSD_fossilCarbonContent], type: double}
+          status: {paths: [status, extWBCSD_pfStatus]}
+
+          # [4] campo que não existe na origem -> vazio, com o tipo da coluna v9
+          ccs_technological_co2_capture_included: {const: null, type: boolean}
+
+          # [5] drop: campos v7 como pcf.dataQualityRating.reliabilityDQR simplesmente não são mapeados
+
+          # [6] lista de objectos -> lista de valores
+          cross_sectoral_standards: "pcf.crossSectoralStandardsUsed[*].crossSectoralStandard ::array<string>"
+          # [7] listas aninhadas achatadas numa só lista
+          product_or_sector_specific_rules: "pcf.productOrSectorSpecificRules[*].productOrSectorSpecificRules[*].ruleName ::array<string>"
+
+          # [8] valor simples -> lista
+          product_classifications: {path: extWBCSD_productCodeCpc, transform: {prefix: "urn:cpc:"}, type: "array<string>"}
+
+          # [9] um campo origem -> dois destinos, conforme o sinal ("0 if v7 value is neg" / "0 if >= 0")
+          land_management_biogenic_co2_emissions:
+            cases:
+              - when: {path: pcf.extTFS_luGhgEmissions, op: gte, value: 0}
+                path: pcf.extTFS_luGhgEmissions
+              - else: 0
+            type: double
+          land_management_biogenic_co2_removals:      # o mesmo com clamp, mais curto
+            path: pcf.extTFS_luGhgEmissions
+            transform: {clamp: {max: 0}}
+            type: double
+          # mudança de convenção de sinal: withdrawal (v7) -> uptake (v9)
+          biogenic_co2_uptake: {path: pcf.biogenicCarbonWithdrawal, transform: {multiply: -1}, type: double}
+
+          # [10] formato ("should have format urn:<BPN>") — só avisa, não pára a carga
+          company_ids:
+            path: companyIds
+            type: array<string>
+            check: {regex: "^urn:.*BPNL[0-9A-Z]{12}$", on_fail: warn}
+
+          # [11] intervalo ("decimal (Range 0-100)")
+          primary_data_share:
+            path: pcf.primaryDataShare
+            type: double
+            check: {min: 0, max: 100, on_fail: "null"}
+
+          # [12] lista de valores fechada, com tradução de valores antigos
+          allocation_waste_incineration:
+            path: pcf.extTFS_allocationWasteIncineration
+            transform: {map: {cut-off: cut-off, reverse cut-off: cut-off, _ignore_case: true}}
+            check: {in: [polluter pays principle, cut-off, reverse cut-off], ignore_case: true}
+
+          # [13] obrigatório só em certas condições ("M if Mass Balancing used = TRUE")
+          biogenic_carbon_content:
+            path: pcf.carbonContentBiogenic
+            type: double
+            check: {required_if: {path: pcf.massBalancingUsed, op: eq, value: true}}
+
+          # [14] valor por omissão
+          allocation_rules_description:
+            paths: [pcf.allocationRulesDescription, pcf.extWBCSD_allocationRulesDescription]
+            default: In accordance with Catena-X PCF Rulebook
+
+          created: created ::timestamp
+
+  # ------------------------------------------------------------------ PCF 9.0.0 (directo)
+  - name: pcf_v9
+    match:
+      any:
+        - {semantic_id: "urn:samm:io.catenax.pcf:9.*"}
+        - {where: {path: "scopeOfPcfForm[0].specVersion", op: regex, value: "version:9\\."}}
+    document_id:
+      column: pcf_uuid
+      from: [pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id,      # caminhos depois do unwrap
+             pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.version]
+    unwrap:                                       # [2] blocos de 1 elemento -> objectos
+      all: true
+      except: [attestationOfConformance, pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.precedingPfIds]
+    tables:
+      - name: pcf
+        columns:
+          id: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id
+          version: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.version ::int
+          source_model: {const: "9.0.0"}
+          declared_unit_of_measurement: companyAndProductInformation.productInformation.declaredUnitOfMeasurement
+          declared_unit_amount: companyAndProductInformation.productInformation.declaredUnitAmount ::double
+          technological_dqr: pcfAssessmentAndMethodology.dataSourcesAndQuality.technologicalDQR ::double
+          fossil_carbon_content: carbonContent.fossilCarbonContent ::double
+          status: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.status
+          ccs_technological_co2_capture_included: pcfAssessmentAndMethodology.pcfAssessmentInformation.technology.ccsTechnologicalCO2CaptureIncluded ::boolean
+          cross_sectoral_standards: pcfAssessmentAndMethodology.pcfMethodology.standards.crossSectoralStandards ::array<string>
+          product_or_sector_specific_rules: pcfAssessmentAndMethodology.pcfMethodology.standards.productOrSectorSpecificRules ::array<string>
+          product_classifications: companyAndProductInformation.productInformation.productClassifications ::array<string>
+          land_management_biogenic_co2_emissions: productLifeCycleStagesAndEmissions.productionStage.landManagementBiogenicCO2Emissions ::double
+          land_management_biogenic_co2_removals: productLifeCycleStagesAndEmissions.productionStage.landManagementBiogenicCO2Removals ::double
+          biogenic_co2_uptake: productLifeCycleStagesAndEmissions.productionStage.biogenicCO2Uptake ::double
+          company_ids:
+            path: companyAndProductInformation.companyInformation.companyIds
+            type: array<string>
+            check: {regex: "^urn:.*BPNL[0-9A-Z]{12}$", on_fail: warn}
+          primary_data_share:
+            path: pcfAssessmentAndMethodology.dataSourcesAndQuality.primaryDataShare
+            type: double
+            check: {min: 0, max: 100, on_fail: "null"}
+          allocation_waste_incineration:
+            path: pcfAssessmentAndMethodology.pcfMethodology.allocationInForeground.allocationWasteIncineration
+            check: {in: [polluter pays principle, cut-off, reverse cut-off], ignore_case: true}
+          biogenic_carbon_content:
+            path: carbonContent.biogenicCarbonContent
+            type: double
+            check: {required_if: {path: pcfAssessmentAndMethodology.pcfMethodology.massBalancingInformation.massBalancingUsed, op: eq, value: true}}
+          allocation_rules_description:
+            path: pcfAssessmentAndMethodology.pcfMethodology.allocationInForeground.allocationRulesDescription
+            default: In accordance with Catena-X PCF Rulebook
+          created: pcfAssessmentAndMethodology.pcfAssessmentInformation.time.created ::timestamp

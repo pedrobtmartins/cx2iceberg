@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cx2iceberg studio</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="bar">
+    <span class="wordmark">cx2iceberg studio</span>
+    <div class="file-state">
+      <span id="current-file">Nenhuma configuração aberta</span>
+      <span id="dirty" class="dirty" hidden>alterações por guardar</span>
+    </div>
+    <div class="bar-actions">
+      <button id="revert" class="btn btn-quiet" type="button" disabled>Repor</button>
+      <button id="save" class="btn btn-primary" type="button" disabled title="Guardar (Ctrl/⌘ + S)">Guardar</button>
+    </div>
+  </header>
+
+  <nav class="switcher" aria-label="Painéis">
+    <button type="button" data-pane="files" aria-pressed="false">Ficheiros</button>
+    <button type="button" data-pane="editor" aria-pressed="true">Configuração</button>
+    <button type="button" data-pane="preview" aria-pressed="false">Resultado</button>
+  </nav>
+
+  <main class="workspace" data-show="editor">
+    <aside class="pane pane-files" id="pane-files" aria-label="Ficheiros">
+      <section>
+        <h2>Configurações</h2>
+        <ul id="configs" class="file-list"></ul>
+        <button id="new-config" class="btn btn-quiet btn-block" type="button">Nova configuração</button>
+      </section>
+      <section>
+        <h2>Dados de exemplo</h2>
+        <p class="hint">Os documentos que a pré-visualização transforma.</p>
+        <ul id="samples" class="file-list checks"></ul>
+      </section>
+      <section>
+        <details id="paste-box">
+          <summary>Colar um JSON</summary>
+          <textarea id="pasted" spellcheck="false" placeholder='{"catenaXId": "urn:uuid:…"}' aria-label="JSON colado"></textarea>
+        </details>
+        <label class="field">
+          <span>Semantic id dos documentos</span>
+          <input id="semantic-id" type="text" spellcheck="false" placeholder="o que a configuração indicar">
+        </label>
+      </section>
+    </aside>
+
+    <section class="pane pane-editor" id="pane-editor" aria-label="Configuração">
+      <div class="editor" id="editor">
+        <div class="gutter" aria-hidden="true"><pre id="gutter">1</pre></div>
+        <div class="code">
+          <div id="error-band" class="error-band" hidden></div>
+          <div id="jump-band" class="jump-band" hidden></div>
+          <textarea id="yaml" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"
+                    aria-label="Configuração YAML" placeholder="Abra uma configuração à esquerda, ou crie uma nova."></textarea>
+        </div>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite">
+        <span id="status-text">À espera de uma configuração</span>
+        <button id="status-line" class="link" type="button" hidden></button>
+      </div>
+    </section>
+
+    <section class="pane pane-preview" id="pane-preview" aria-label="Resultado">
+      <div class="preview-head">
+        <p id="summary" class="summary">Sem resultado</p>
+        <div class="views" role="tablist" aria-label="Vista">
+          <button type="button" role="tab" data-view="tables" aria-selected="true">Tabelas</button>
+          <button type="button" role="tab" data-view="document" aria-selected="false">Documento</button>
+          <button type="button" role="tab" data-view="ddl" aria-selected="false">DDL</button>
+          <button type="button" role="tab" data-view="warnings" aria-selected="false">Avisos <span id="warn-count"></span></button>
+        </div>
+      </div>
+
+      <div class="view" data-view="tables">
+        <div id="table-tabs" class="table-tabs" role="tablist" aria-label="Tabelas"></div>
+        <p id="table-meta" class="table-meta"></p>
+        <div class="grid-wrap" id="grid-wrap"><table id="grid" class="grid"></table></div>
+        <p class="hint grid-hint">Clique no nome de uma coluna para ir à regra que a produz.</p>
+      </div>
+
+      <div class="view" data-view="document" hidden>
+        <div class="doc-head">
+          <label class="field field-inline">
+            <span>Documento</span>
+            <select id="doc-select"></select>
+          </label>
+          <p id="doc-meta" class="hint"></p>
+        </div>
+        <p class="hint">Clique num campo para inserir o seu caminho no editor, no sítio do cursor.</p>
+        <div id="doc-tree" class="tree"></div>
+      </div>
+
+      <div class="view" data-view="ddl" hidden>
+        <pre id="ddl" class="ddl"></pre>
+      </div>
+
+      <div class="view" data-view="warnings" hidden>
+        <ul id="warnings" class="warnings"></ul>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
