@@ -8,3 +8,5 @@ build/
 dist/
 .DS_Store
 .taste-skill/
+.claude/launch.json
+.cx2iceberg/

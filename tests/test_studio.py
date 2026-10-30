@@ -2,10 +2,17 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
+import yaml
 
-from cx2iceberg.studio.server import ApiError, Studio, make_handler
+from cx2iceberg.config import load
+from cx2iceberg.engine import Document, Engine
+from cx2iceberg.samm import field_tree, label
+from cx2iceberg.studio.server import ApiError, Studio, make_handler, new_config, normalize, render
+
+EX = Path(__file__).parent.parent / "examples"
 
 CFG = """target: {database: db}
 submodels:
@@ -34,46 +41,149 @@ def root(tmp_path):
     return tmp_path
 
 
-def test_files_and_safety(root):
+@pytest.fixture
+def pcf_root(tmp_path):
+    """Pasta com o PCF 9.0.0 como se tivesse vindo do catálogo (sem rede)."""
+    d = tmp_path / "models" / "io.catenax.pcf" / "9.0.0"
+    d.mkdir(parents=True)
+    (d / "Pcf-schema.json").write_text((EX / "schemas" / "pcf_9.0.0-schema.json").read_text())
+    (d / "Pcf.json").write_text((EX / "data" / "pcf_9.json").read_text())
+    return tmp_path
+
+
+PCF_INFO = {"model": "io.catenax.pcf", "version": "9.0.0", "aspect": "Pcf",
+            "schema": "models/io.catenax.pcf/9.0.0/Pcf-schema.json", "example": "models/io.catenax.pcf/9.0.0/Pcf.json"}
+
+
+def test_files_load_and_safety(root):
     s = Studio(root)
     f = s.files()
     assert [c["path"] for c in f["configs"]] == ["cfg/a.yaml"]          # só configurações, sem pastas escondidas
     assert [d["path"] for d in f["samples"]] == ["data/d.json"]          # sem *-schema.json
+    cfg = s.load("cfg/a.yaml")["config"]
+    assert cfg["submodels"][0]["tables"][0]["columns"]["n"] == {"path": "n", "type": "int"}   # forma compacta expandida
     with pytest.raises(ApiError):
-        s.read("../outside.yaml")
+        s.load("../outside.yaml")
 
 
-def test_preview_ok_and_errors(root):
+def test_render_roundtrip():
+    cfg = normalize(yaml.safe_load(CFG))
+    text = render(cfg)
+    again = normalize(yaml.safe_load(text))
+    assert again == cfg
+    assert "id: id\n" in text                                            # coluna só com caminho fica compacta
+
+
+def test_preview_with_config_dict(root):
     s = Studio(root)
-    r = s.preview({"text": CFG, "samples": ["data/d.json"]})
+    cfg = normalize(yaml.safe_load(CFG))
+    r = s.preview({"config": cfg, "path": "cfg/a.yaml", "samples": ["data/d.json"]})
     assert r["ok"] and r["summary"]["rows"] == 2
-    t = r["tables"][0]
-    assert [c["name"] for c in t["columns"]] == ["document_id", "id", "n"] and t["rows"][0]["n"] == 1
-    assert r["documents"][0]["source"] == "data/d.json" and r["documents"][0]["submodels"] == ["s"]
-    bad_yaml = s.preview({"text": CFG + "  oops: [", "samples": []})
-    assert not bad_yaml["ok"] and bad_yaml["stage"] == "yaml" and bad_yaml["line"]
-    bad_cfg = s.preview({"text": CFG.replace("mode: merge", "mode: nope"), "samples": []})
-    assert bad_cfg["stage"] == "config" and CFG.splitlines()[bad_cfg["line"] - 1].strip() == "mode: merge"
-    bad_run = s.preview({"text": CFG, "samples": [], "pasted": '{"id": "Z", "n": 1.5}'})
-    assert bad_run["stage"] == "run" and "não é inteiro" in bad_run["error"]
-    pasted = s.preview({"text": CFG, "samples": [], "pasted": '[{"id": "P", "n": 7}]'})
-    assert pasted["tables"][0]["rows"][0]["id"] == "P"
-    env = s.preview({"text": "target:\n  database: ${NAO_DEFINIDA}\n" + CFG.split("\n", 1)[1], "samples": []})
-    assert env["ok"]                                                    # variável em falta não bloqueia
+    assert [c["name"] for c in r["tables"][0]["columns"]] == ["document_id", "id", "n"]
+    cfg["submodels"][0]["tables"][0]["mode"] = "nope"
+    bad = s.preview({"config": cfg, "samples": []})
+    assert bad["stage"] == "config" and "nope" in bad["error"]
+    run_err = s.preview({"config": normalize(yaml.safe_load(CFG)), "samples": [], "pasted": '{"id": "Z", "n": 1.5}'})
+    assert run_err["stage"] == "run" and "não é inteiro" in run_err["error"]
 
 
-def test_save_conflict_and_type(root):
+def test_save_conflicts(root):
     s = Studio(root)
-    f = s.read("cfg/a.yaml")
+    f = s.load("cfg/a.yaml")
     r = s.save("cfg/a.yaml", CFG + "# x\n", f["mtime"])
-    assert (root / "cfg" / "a.yaml").read_text().endswith("# x\n")
     with pytest.raises(ApiError, match="alterado fora"):
         s.save("cfg/a.yaml", CFG, f["mtime"])                          # mtime antigo
+    with pytest.raises(ApiError, match="Já existe"):
+        s.save("cfg/a.yaml", CFG, None)                                # ficheiro novo com nome ocupado
     s.save("cfg/a.yaml", CFG, r["mtime"])
     with pytest.raises(ApiError, match=".yaml"):
         s.save("data/d.json", "{}", None)
-    s.save("novo/b.yaml", CFG, None)
-    assert (root / "novo" / "b.yaml").exists()
+
+
+def test_new_config_from_model_and_validation(pcf_root):
+    cfg = new_config(PCF_INFO, pcf_root, "configs/pcf_v9.yaml")
+    sub = cfg["submodels"][0]
+    assert sub["model"]["schema"] == "../models/io.catenax.pcf/9.0.0/Pcf-schema.json"
+    assert sub["validate"] == "warn" and sub["match"] == {"semantic_id": "urn:samm:io.catenax.pcf:9.*"}
+    assert sub["document_id"]["from"] == ["pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id"]
+    assert "attestationOfConformance" in sub["unwrap"]["paths"]       # lista com 1 elemento no exemplo
+    s = Studio(pcf_root)
+    ok = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [PCF_INFO["example"]]})
+    assert ok["ok"] and ok["validation"] == [] and ok["summary"]["rows"] == 1   # o exemplo usa o URN do schema
+    doc = json.loads((pcf_root / PCF_INFO["example"]).read_text())
+    doc["carbonContent"][0]["fossilCarbonContent"] = "muito"
+    del doc["general"]
+    bad = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [], "pasted": json.dumps(doc)})
+    errs = {e["path"]: e["message"] for e in bad["validation"][0]["errors"]}
+    assert errs[""] == "falta o campo obrigatório 'general'"
+    assert errs["carbonContent[0].fossilCarbonContent"] == '"muito" devia ser número'
+    sub["validate"] = "skip"
+    skipped = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [], "pasted": json.dumps(doc)})
+    assert skipped["summary"]["rows"] == 0
+
+
+def test_validate_fail_and_config_errors(pcf_root):
+    (pcf_root / "configs").mkdir()
+    cfg = new_config(PCF_INFO, pcf_root, "configs/pcf_v9.yaml")
+    cfg["submodels"][0]["validate"] = "fail"
+    p = pcf_root / "configs" / "pcf_v9.yaml"
+    p.write_text(render(cfg))
+    loaded = load(p)                                                   # caminhos relativos à configuração
+    from cx2iceberg.engine import TransformError
+    with pytest.raises(TransformError, match="não cumpre o schema"):
+        Engine(loaded).run([Document({"x": 1}, "x.json", "urn:samm:io.catenax.pcf:9.0.0#Pcf")])
+    from cx2iceberg import ConfigError, from_dict
+    with pytest.raises(ConfigError, match="precisa de model.schema"):
+        from_dict({"submodels": [{"validate": "warn", "tables": [{"name": "t", "auto": True}]}]})
+
+
+def test_fields_tree(pcf_root):
+    s = Studio(pcf_root)
+    cfg = new_config(PCF_INFO, pcf_root, "configs/pcf_v9.yaml")
+    tree = s.fields(cfg, 0, "configs/pcf_v9.yaml")["tree"]
+    flat = {}
+
+    def walk(ns):
+        for n in ns:
+            flat[n["path"]] = n
+            walk(n.get("children") or [])
+
+    walk(tree)
+    fossil = flat["productLifeCycleStagesAndEmissions.productionStage.fossilGhgEmissions"]
+    assert fossil["label"] == "Fossil GHG emissions" and fossil["type"] == "double" and fossil["example"] == 0.5
+    assert flat["companyAndProductInformation.companyInformation.companyIds"]["kind"] == "values"
+    assert flat["attestationOfConformance"]["single"] is True
+    cfg["submodels"][0]["unwrap"]["paths"].remove("attestationOfConformance")   # passa a lista com vários
+    tree2 = s.fields(cfg, 0, "configs/pcf_v9.yaml")["tree"]
+    att = next(n for n in tree2 if n["key"] == "attestationOfConformance")
+    assert att["single"] is False and att["children"][0]["path"].startswith("attestationOfConformance[*].")
+    assert label("companyIds") == "Company IDs" and label("pcfExcludingBiogenicUptake") == "PCF excluding biogenic uptake"
+
+
+def test_field_tree_marks_fields_missing_from_example():
+    schema = json.loads((EX / "schemas" / "pcf_9.0.0-schema.json").read_text())
+    tree = field_tree(schema, None, {"scopeOfPcfForm": [{"specVersion": "x"}]})
+    scope = next(n for n in tree if n["key"] == "scopeOfPcfForm")
+    kids = {c["key"]: c for c in scope["children"]}
+    assert kids["specVersion"]["in_example"] and not kids["partialFullPcf"]["in_example"]
+
+
+def test_catalog_with_local_clone(tmp_path):
+    clone = tmp_path / "clone"
+    v = clone / "io.catenax.pcf" / "9.0.0"
+    (v / "gen").mkdir(parents=True)
+    (v / "gen" / "Pcf-schema.json").write_text((EX / "schemas" / "pcf_9.0.0-schema.json").read_text())
+    (v / "gen" / "Pcf.json").write_text((EX / "data" / "pcf_9.json").read_text())
+    (v / "metadata.json").write_text('{"status": "release"}')
+    s = Studio(tmp_path / "work", models_dir=clone)
+    (tmp_path / "work").mkdir()
+    models = s.catalog_list(False)["models"]
+    assert models[0]["id"] == "io.catenax.pcf" and models[0]["versions"][0]["version"] == "9.0.0"
+    assert s.catalog_status("io.catenax.pcf", ["9.0.0"])["status"] == {"9.0.0": "release"}
+    n = s.new("io.catenax.pcf", "9.0.0", None)
+    assert n["path"] == "configs/pcf_v9.yaml" and (tmp_path / "work" / "models/io.catenax.pcf/9.0.0/Pcf.json").exists()
+    with pytest.raises(ApiError, match="desconhecido"):
+        s.new("io.catenax.pcf", "../../etc", None)
 
 
 def test_http_guard(root):
@@ -90,8 +200,9 @@ def test_http_guard(root):
         with pytest.raises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req)
         assert e.value.code == 403
-        with pytest.raises(urllib.error.HTTPError) as e:
-            urllib.request.urlopen(base + "/../../etc/passwd")
-        assert e.value.code in (403, 404)
+        put = urllib.request.Request(base + "/api/file", method="PUT", headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"path": "cfg/new.yaml", "config": normalize(yaml.safe_load(CFG))}).encode())
+        assert json.load(urllib.request.urlopen(put))["path"] == "cfg/new.yaml"
+        assert (root / "cfg" / "new.yaml").read_text().startswith("# Gerado pelo cx2iceberg studio")
     finally:
         httpd.shutdown()

@@ -6,10 +6,12 @@ import fnmatch
 import hashlib
 import json
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from . import athena_types as T
@@ -137,6 +139,7 @@ class Engine:
         self.config = config
         self.match_all = config.input.get("match_all", False) if match_all is None else match_all
         self.ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.validation: list[dict[str, Any]] = []   # documentos que não cumprem o schema do modelo
 
     def route(self, docs: Iterable[Document]) -> dict[str, list[Document]]:
         routed: dict[str, list[Document]] = {s.name: [] for s in self.config.submodels}
@@ -157,6 +160,8 @@ class Engine:
         routed = self.route(docs)
         for sub in self.config.submodels:
             sub_docs = routed[sub.name]
+            if sub.validate != "off":
+                sub_docs = self._validate(sub, sub_docs)
             if sub.unwrap:
                 sub_docs = [Document(unwrap(d.data, sub.unwrap, d.source_file), d.source_file, d.semantic_id,
                                      {**d.meta, "_raw": d.data}) for d in sub_docs]
@@ -177,6 +182,27 @@ class Engine:
         for res in results.values():
             self._finalize(res)
         return results
+
+    def _validate(self, sub: SubmodelSpec, docs: list[Document]) -> list[Document]:
+        validator = schema_validator(self.config, sub)
+        kept = []
+        for d in docs:
+            problems = [describe_error(e) for e in sorted(validator.iter_errors(d.data), key=lambda e: list(e.absolute_path))]
+            if not problems:
+                kept.append(d)
+                continue
+            self.validation.append({"source": d.source_file, "submodel": sub.name, "errors": problems})
+            summary = "; ".join(f"{p['path'] or '(raiz)'}: {p['message']}" for p in problems[:3])
+            more = f" (+{len(problems) - 3})" if len(problems) > 3 else ""
+            msg = f"{d.source_file} não cumpre o schema de '{sub.name}': {summary}{more}"
+            if sub.validate == "fail":
+                raise TransformError(msg)
+            if sub.validate == "skip":
+                log.warning("%s — documento ignorado", msg)
+                continue
+            log.warning(msg)
+            kept.append(d)
+        return kept
 
     def _with_document_id(self, sub: SubmodelSpec, doc: Document) -> Document:
         rule = sub.document_id
@@ -398,6 +424,61 @@ def check_value(chk: dict, v: Any, ctx: Context) -> str | None:
             if "max" in chk and x > float(chk["max"]):
                 return f"{item!r} > máximo {chk['max']}"
     return None
+
+
+_VALIDATORS: dict[str, Any] = {}
+
+
+def schema_validator(config: Config, sub: SubmodelSpec):
+    """Validador jsonschema para o schema SAMM do submodelo (em cache por ficheiro)."""
+    try:
+        import jsonschema
+    except ImportError as e:  # pragma: no cover
+        raise ConfigError("Para validar documentos instale jsonschema (pip install jsonschema)") from e
+    path = Path(os.path.normpath((config.base_dir or Path.cwd()) / sub.model["schema"]))
+    key = str(path.resolve())
+    if key not in _VALIDATORS:
+        if not path.is_file():
+            raise ConfigError(f"Submodelo '{sub.name}': schema não encontrado em {path}")
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        _VALIDATORS[key] = jsonschema.validators.validator_for(schema)(schema)
+    return _VALIDATORS[key]
+
+
+_TYPE_NAMES = {"string": "texto", "number": "número", "integer": "número inteiro", "boolean": "verdadeiro/falso",
+               "object": "objecto", "array": "lista", "null": "nulo"}
+
+
+def describe_error(e) -> dict[str, str]:
+    """Erro jsonschema -> {path, message} legível em português."""
+    path = ""
+    for part in e.absolute_path:
+        path += f"[{part}]" if isinstance(part, int) else (f".{part}" if path else str(part))
+    v, val = e.validator, e.validator_value
+    if v == "required":
+        m = re.search(r"'([^']+)' is a required property", e.message)
+        msg = f"falta o campo obrigatório '{m.group(1) if m else e.message}'"
+    elif v == "type":
+        names = " ou ".join(_TYPE_NAMES.get(t, t) for t in (val if isinstance(val, list) else [val]))
+        msg = f"{json.dumps(e.instance, ensure_ascii=False, default=str)[:60]} devia ser {names}"
+    elif v == "pattern":
+        kind = "data/hora ISO 8601" if "[0-9]{3,}" in str(val) and "T" in str(val) else "o formato esperado"
+        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} não tem {kind}"
+    elif v == "enum":
+        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} não é um dos valores permitidos ({', '.join(map(str, val))})"
+    elif v in ("minimum", "exclusiveMinimum"):
+        msg = f"{e.instance} é menor que o mínimo {val}"
+    elif v in ("maximum", "exclusiveMaximum"):
+        msg = f"{e.instance} é maior que o máximo {val}"
+    elif v == "minItems":
+        msg = f"a lista tem de ter pelo menos {val} elemento(s)"
+    elif v == "minLength":
+        msg = "não pode estar vazio"
+    elif v == "additionalProperties":
+        msg = f"campo não previsto no modelo: {e.message.split('(')[-1].rstrip(')')}"
+    else:
+        msg = e.message
+    return {"path": path, "message": msg, "rule": v}
 
 
 def _with_column(spec: TableSpec, col: ColumnSpec) -> TableSpec:

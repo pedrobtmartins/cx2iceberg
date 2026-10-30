@@ -93,7 +93,7 @@ def cmd_init(args):
 def cmd_studio(args):
     from .studio.server import serve
 
-    serve(args.root, args.port, args.open)
+    serve(args.root, args.port, args.open, args.models_dir)
 
 
 def cmd_transforms(args):
@@ -150,6 +150,7 @@ def main(argv=None):
     s.add_argument("--root", default=".", help="pasta com as configurações e os dados de exemplo (omissão: a actual)")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--open", action="store_true", help="abre o browser")
+    s.add_argument("--models-dir", help="clone local de eclipse-tractusx/sldt-semantic-models (sem acesso ao GitHub)")
     s.set_defaults(fn=cmd_studio)
 
     t = sub.add_parser("transforms", help="lista as transformações disponíveis")

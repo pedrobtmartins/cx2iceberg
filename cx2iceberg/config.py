@@ -76,6 +76,8 @@ class SubmodelSpec:
     common_columns: list[ColumnSpec] = field(default_factory=list)
     unwrap: dict[str, Any] | None = None
     document_id: dict[str, Any] | None = None  # UUID por documento, em todas as tabelas do submodelo
+    model: dict[str, Any] | None = None        # {schema, example}: modelo SAMM de origem (caminhos relativos à config)
+    validate: str = "off"                      # off | warn | skip | fail: valida cada documento contra o schema
 
 
 @dataclass
@@ -84,6 +86,7 @@ class Config:
     submodels: list[SubmodelSpec]
     input: dict[str, Any]
     defaults: dict[str, Any]
+    base_dir: Path | None = None               # pasta da configuração (para caminhos relativos)
 
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -293,12 +296,12 @@ def parse_table(spec: dict, defaults: dict, common: list[ColumnSpec], where: str
         raise ConfigError(f"{where}: auto_naming deve ser full|leaf")
     if t.auto_lists not in ("array", "json", "skip"):
         raise ConfigError(f"{where}: auto_lists deve ser array|json|skip")
-    if not t.columns and not t.auto:
-        raise ConfigError(f"{where}: defina 'columns' ou 'auto: true'")
     return t
 
 
-_SUBMODEL_KEYS = {"name", "match", "tables", "auto_normalize", "defaults", "common_columns", "unwrap", "document_id"}
+_SUBMODEL_KEYS = {"name", "match", "tables", "auto_normalize", "defaults", "common_columns", "unwrap", "document_id",
+                  "model", "validate"}
+VALIDATE_MODES = {"off", "warn", "skip", "fail"}
 DOC_ID_STRATEGIES = {"key", "content", "random"}
 
 
@@ -343,6 +346,8 @@ def parse_unwrap(spec: Any, where: str) -> dict[str, Any] | None:
     if bad:
         raise ConfigError(f"{where}: caminhos de unwrap não levam índices: {bad}")
     return rule
+
+
 _DEFAULT_KEYS = _TABLE_KEYS - {"name", "columns", "explode", "where", "location", "comment"}
 
 
@@ -355,10 +360,10 @@ def load(path: str | Path) -> Config:
         if "mapping values are not allowed" in str(e):
             hint = " Dica: na forma compacta escreva '::int' (sem espaço depois de '::') ou ponha o valor entre aspas."
         raise ConfigError(f"YAML inválido em {path}: {e}.{hint}") from e
-    return from_dict(raw)
+    return from_dict(raw, Path(path).resolve().parent)
 
 
-def from_dict(raw: dict) -> Config:
+def from_dict(raw: dict, base_dir: str | Path | None = None) -> Config:
     _check_keys(raw, {"target", "input", "defaults", "submodels", "plugins"}, "config")
     for mod in raw.get("plugins", []) or []:
         importlib.import_module(mod)
@@ -381,9 +386,24 @@ def from_dict(raw: dict) -> Config:
             _check_keys(an, {"table_prefix", "id_path", "id_column", "exclude", "max_depth", "naming"}, f"{where}.auto_normalize")
         if not tables and an is None:
             raise ConfigError(f"{where}: defina 'tables' e/ou 'auto_normalize'")
+        model = s.get("model")
+        if model is not None:
+            if not isinstance(model, dict) or "schema" not in model:
+                raise ConfigError(f"{where}.model: indique pelo menos 'schema' (e opcionalmente 'example')")
+            _check_keys(model, {"schema", "example", "id", "version"}, f"{where}.model")
+        validate = s.get("validate", "warn" if model else "off")
+        if validate is True:
+            validate = "warn"
+        if validate is False:
+            validate = "off"
+        if validate not in VALIDATE_MODES:
+            raise ConfigError(f"{where}.validate deve ser um de {sorted(VALIDATE_MODES)}")
+        if validate != "off" and not model:
+            raise ConfigError(f"{where}.validate precisa de model.schema")
         subs.append(SubmodelSpec(name, s.get("match") or {}, tables, an, sdefaults, common,
                                  parse_unwrap(s.get("unwrap"), f"{where}.unwrap"),
-                                 parse_document_id(s.get("document_id"), f"{where}.document_id")))
+                                 parse_document_id(s.get("document_id"), f"{where}.document_id"),
+                                 model, validate))
     if not subs:
         raise ConfigError("config: não há 'submodels'")
-    return Config(target, subs, raw.get("input", {}) or {}, defaults)
+    return Config(target, subs, raw.get("input", {}) or {}, defaults, Path(base_dir) if base_dir else None)

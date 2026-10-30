@@ -3,7 +3,7 @@ name = "cx2iceberg"
 version = "0.1.0"
 description = "Catena-X submodel JSON -> Apache Iceberg tables in Amazon Athena, driven by YAML rules"
 requires-python = ">=3.10"
-dependencies = ["pyyaml>=6", "pandas>=2"]
+dependencies = ["pyyaml>=6", "pandas>=2", "jsonschema>=4"]
 
 [project.optional-dependencies]
 aws = ["awswrangler>=3.9", "boto3"]

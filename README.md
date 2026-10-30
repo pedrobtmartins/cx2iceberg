@@ -354,23 +354,53 @@ Os dois podem coexistir: as tabelas são independentes, por isso pode juntar amb
 
 Com `keys: [id, version]`, um PCF migrado de v7 e o mesmo PCF entregue em v9 ficam **na mesma linha**: ganha o último a ser processado. Os exemplos oficiais V7 e V9 têm o mesmo `id`, por isso, para os comparar, corra cada um em separado.
 
-## Studio (interface web)
+## Studio: construir transformações sem escrever YAML
 
 ```bash
 cx2iceberg studio --root . --open
 ```
 
-Abre em `http://127.0.0.1:8765` uma aplicação local, sem dependências extra, para trabalhar nas configurações da pasta `--root`. Tem três painéis:
+Abre em `http://127.0.0.1:8765` uma aplicação local, pensada para quem não conhece o formato da configuração:
 
-* **Ficheiros:** as configurações (`.yaml` com `submodels:`) e os dados de exemplo (`.json`, `.jsonl`). Escolhe-se que documentos transformar, ou cola-se um JSON.
-* **Configuração:** o editor YAML. Valida enquanto se escreve e marca a linha do erro (YAML inválido, chave desconhecida, tipo errado). Grava com `Ctrl/⌘+S`, e recusa gravar por cima de alterações feitas fora do studio.
-* **Resultado:** corre o motor sobre os exemplos a cada alteração e mostra as tabelas, as linhas, os tipos, os checks falhados, a DDL e os avisos. Se a configuração ficar inválida enquanto se escreve, continua a mostrar o último resultado válido.
+1. **Escolher um submodelo** do catálogo oficial ([eclipse-tractusx/sldt-semantic-models](https://github.com/eclipse-tractusx/sldt-semantic-models)), com as versões e o estado de cada uma (release, deprecated…). O studio descarrega o schema e o exemplo dessa versão para `models/<submodelo>/<versão>/` e cria uma configuração inicial com:
+   * o identificador do documento;
+   * o UUID que liga as tabelas;
+   * a validação contra o schema;
+   * o `unwrap` das listas que no exemplo têm um só elemento.
+2. **Campos do modelo:** todos os campos do schema, com nome legível, descrição, tipo, a marca "obrigatório" e o valor do exemplo. Os campos que o exemplo não traz aparecem também, marcados como "sem valor no exemplo".
+3. **Clicar num campo cria uma coluna.** Cada coluna configura-se em linguagem simples:
+   * nome e tipo;
+   * "se estiver vazio, usar…";
+   * passos: maiúsculas, tirar o prefixo URN, converter unidade, traduzir valores, limitar entre mínimo e máximo…;
+   * validação: obrigatório, mínimo e máximo, valores permitidos, e o que fazer se falhar.
+4. **Listas:**
+   * "Uma linha por elemento" cria uma tabela filha, ligada à principal pelo UUID do documento;
+   * "É sempre um só" ou "Pode ter vários" decide o `unwrap`.
+5. **Resultado em tempo real** sobre os dados de teste: o exemplo oficial, ficheiros da pasta ou um documento colado. Inclui a validação contra o schema, com as mensagens em português e o caminho de cada problema.
+6. **Guardar** gera o YAML. Em **Avançado** vê-se e edita-se o YAML, para as regras que o construtor não mostra (`cases`, `template`…). Essas colunas aparecem no construtor como "regra avançada".
 
-Duas ligações tornam a configuração mais rápida:
-* clicar no nome de uma coluna salta para a regra que a produz no YAML;
-* na vista **Documento**, clicar num campo insere o seu caminho no cursor, já como o motor o vê depois do `unwrap`.
+Sem acesso ao GitHub (proxy, rede fechada), use um clone local do repositório de modelos:
 
+```bash
+cx2iceberg studio --models-dir ~/code/sldt-semantic-models
+```
+
+A lista do catálogo vem de uma só chamada à API do GitHub e fica em cache 24 h em `.cx2iceberg/`. Com `GITHUB_TOKEN` definido, usa esse token.
 O servidor só aceita ligações de `127.0.0.1` e só lê e grava dentro de `--root`. A pré-visualização nunca escreve no Athena.
+
+## Validar os documentos contra o schema do modelo
+
+```yaml
+submodels:
+  - name: pcf_v9
+    model:
+      schema: ../models/io.catenax.pcf/9.0.0/Pcf-schema.json   # relativo à configuração
+      example: ../models/io.catenax.pcf/9.0.0/Pcf.json
+    validate: warn        # off | warn (omissão com model) | skip | fail
+```
+
+Cada documento é validado **à entrada**, antes de qualquer regra: tipos, campos obrigatórios, enumerações, formatos (por exemplo o padrão das datas `Timestamp`) e limites. Com `warn` o problema fica no log e o documento segue. Com `skip` o documento é ignorado. Com `fail` a carga pára.
+À saída, cada coluna com `type:` é convertida para esse tipo, com o `on_error` da coluna, e o `check` acrescenta as regras de negócio. São duas camadas: o schema diz se o documento é válido; o tipo e o `check` dizem se o valor serve para a tabela.
 
 ## AWS Lambda
 
