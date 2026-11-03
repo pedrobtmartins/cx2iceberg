@@ -428,3 +428,7 @@ write_athena(cfg, results)
 ```bash
 pip install -e ".[dev]" && pytest
 ```
+
+## Licença
+
+O código é distribuído sob a licença [Apache-2.0](LICENSE). Os schemas e alguns exemplos em `examples/` vêm do projeto Eclipse Tractus-X e mantêm a licença CC-BY-4.0; ver [NOTICE.md](NOTICE.md).
