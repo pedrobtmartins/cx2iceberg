@@ -8,11 +8,15 @@ O construtor trabalha sobre a configuração como dicionário (o mesmo formato d
 """
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
+import threading
 from datetime import date, datetime
 from decimal import Decimal
 from http import HTTPStatus
@@ -23,14 +27,15 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from ..athena_types import athena_type
+from ..athena_types import INFER_STRUCT, athena_type, parse as parse_type
 from ..catalog import Catalog, CatalogError
-from ..config import ConfigError, from_dict, parse_short, parse_unwrap, sanitize
+from ..config import load_yaml, ConfigError, from_dict, parse_short, parse_unwrap, sanitize
 from ..engine import Document, Engine, TransformError, unwrap
-from ..reader import read_documents
+from ..reader import loads as strict_loads, read_documents
 from ..samm import field_tree, skeleton
 from ..transforms import REGISTRY
-from ..writer import ddl
+from ..report import ACTIONS, KIND_TITLES, REASONS
+from ..writer import WriteCheckError, check_offline, check_table, ddl
 
 STATIC = Path(__file__).parent / "static"
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".taste-skill", ".pytest_cache", ".cx2iceberg"}
@@ -57,6 +62,73 @@ def _jsonable(v: Any) -> Any:
     if isinstance(v, list):
         return [_jsonable(x) for x in v]
     return v
+
+
+# --- valores e relatório para o browser -------------------------------------------------------------
+_JS_SAFE = 2 ** 53     # acima disto um número JSON perde algarismos no JavaScript (9007199254740993 -> ...992)
+
+
+def _float32_text(v: float) -> str:
+    """O texto mais curto que volta ao mesmo float de 32 bits (o que o Athena mostra num `float`/real):
+    1.100000023841858 -> 1.1."""
+    import struct
+
+    target = struct.pack("<f", v)
+    for digits in range(1, 10):
+        text = f"{v:.{digits}g}"
+        if struct.pack("<f", float(text)) == target:
+            return text
+    return repr(v)
+
+
+def _display(v: Any, tree: Any) -> Any:
+    """Valor tal como vai ficar na tabela, numa forma que o browser não altera: inteiros grandes e decimais
+    como texto, float (32 bits) pelo seu texto curto, datas em ISO. Antes o browser mostrava 9007199254740993
+    como 9007199254740992 e um float 1.1 como 1.100000023841858."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v if -_JS_SAFE <= v <= _JS_SAFE else str(v)
+    if isinstance(v, float):
+        if not math.isfinite(v):
+            return str(v)
+        return float(_float32_text(v)) if tree == "float" else v
+    if isinstance(tree, tuple) and tree != INFER_STRUCT:
+        if tree[0] == "array" and isinstance(v, list):
+            return [_display(x, tree[1]) for x in v]
+        if tree[0] == "map" and isinstance(v, dict):
+            return {str(k): _display(x, tree[2]) for k, x in v.items()}
+        if tree[0] == "struct" and isinstance(v, dict):
+            fields = dict(tree[1])
+            return {k: _display(x, fields.get(k)) for k, x in v.items()}
+    if isinstance(v, dict):
+        return {str(k): _display(x, None) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_display(x, None) for x in v]
+    return _jsonable(v)
+
+
+def _display_row(row: dict, types: dict[str, str]) -> dict:
+    out = {}
+    for c, t in types.items():
+        try:
+            tree = parse_type(t)
+        except ValueError:
+            tree = None
+        out[c] = _display(row.get(c), tree)
+    return out
+
+
+def _report_view(report) -> dict:
+    """O relatório da carga para o studio: o mesmo do CLI, com os nomes em português e até 5 exemplos por grupo."""
+    d = _jsonable(report.to_dict(examples=5))
+    for g in d["groups"]:
+        g["kind_title"] = KIND_TITLES.get(g["kind"], g["kind"])
+        g["reason_label"] = REASONS.get(g["reason"], g["reason"])
+        g["action_label"] = ACTIONS.get(g["action"], g["action"])
+    return d
 
 
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -227,6 +299,14 @@ def _join(base: Path, rel: str) -> Path:
     return Path(os.path.normpath(base / rel))
 
 
+_SAVE_LOCK = threading.Lock()
+
+
+def _version(p: Path) -> str:
+    """Versão de um ficheiro para detectar edições feitas fora do studio: o hash do conteúdo (não o mtime)."""
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
 class Studio:
     def __init__(self, root: str | Path, models_dir: str | Path | None = None):
         self.root = Path(root).resolve()
@@ -275,14 +355,14 @@ class Studio:
             raise ApiError(HTTPStatus.NOT_FOUND, f"Ficheiro não encontrado: {rel}")
         text = p.read_text(encoding="utf-8")
         try:
-            raw = yaml.safe_load(text) or {}
+            raw = load_yaml(text) or {}
         except yaml.YAMLError as e:
-            return {"path": rel, "text": text, "mtime": p.stat().st_mtime, "config": None, "error": f"YAML inválido: {e}"}
-        return {"path": rel, "text": text, "mtime": p.stat().st_mtime, "config": normalize(raw)}
+            return {"path": rel, "text": text, "version": _version(p), "config": None, "error": f"YAML inválido: {e}"}
+        return {"path": rel, "text": text, "version": _version(p), "config": normalize(raw)}
 
     def parse(self, text: str) -> dict:
         try:
-            raw = yaml.safe_load(text) or {}
+            raw = load_yaml(text) or {}
         except yaml.YAMLError as e:
             mark = getattr(e, "problem_mark", None)
             raise ApiError(HTTPStatus.BAD_REQUEST, f"YAML inválido{f' (linha {mark.line + 1})' if mark else ''}: "
@@ -291,20 +371,24 @@ class Studio:
             raise ApiError(HTTPStatus.BAD_REQUEST, "A configuração tem de ser um mapa YAML")
         return {"config": normalize(raw)}
 
-    def save(self, rel: str, text: str, mtime: float | None) -> dict:
+    def save(self, rel: str, text: str, version: str | None) -> dict:
+        """Grava se o ficheiro ainda é o que o studio abriu (`version` = hash do conteúdo lido; None = ficheiro novo).
+        Antes comparava-se o mtime: com a mesma marca de tempo (sistemas de ficheiros com resolução de 1-2 s,
+        pastas partilhadas com Docker/WSL, `cp -p`, `rsync -t`) uma edição feita fora era apagada sem aviso."""
         p = self.safe(rel)
         if not rel.endswith(CONFIG_EXT):
             raise ApiError(HTTPStatus.BAD_REQUEST, "Só se gravam ficheiros .yaml/.yml")
-        if p.exists() and mtime is not None and abs(p.stat().st_mtime - mtime) > 1e-6:
-            raise ApiError(HTTPStatus.CONFLICT, "O ficheiro foi alterado fora do studio desde que o abriu. Recarregue-o.")
-        if p.exists() and mtime is None:
-            raise ApiError(HTTPStatus.CONFLICT, f"Já existe um ficheiro {rel}. Escolha outro nome.")
-        p.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.replace(tmp, p)
-        return {"path": rel, "mtime": p.stat().st_mtime}
+        with _SAVE_LOCK:            # dois separadores a gravar ao mesmo tempo: verificação e escrita juntas
+            if p.exists() and version is not None and _version(p) != version:
+                raise ApiError(HTTPStatus.CONFLICT, "O ficheiro foi alterado fora do studio desde que o abriu. Recarregue-o.")
+            if p.exists() and version is None:
+                raise ApiError(HTTPStatus.CONFLICT, f"Já existe um ficheiro {rel}. Escolha outro nome.")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, p)
+            return {"path": rel, "version": _version(p)}
 
     # --- catálogo ----------------------------------------------------------
     def catalog_list(self, refresh: bool) -> dict:
@@ -373,7 +457,7 @@ class Studio:
             raw = _expand_obj(body["config"])
         else:
             try:
-                raw = yaml.safe_load(_expand_env_lenient(body.get("text", ""))) or {}
+                raw = load_yaml(_expand_env_lenient(body.get("text", ""))) or {}
             except yaml.YAMLError as e:
                 return {"ok": False, "stage": "yaml", "error": str(e).split("\n")[0]}
         base = self._base(body.get("path"))
@@ -401,33 +485,44 @@ class Studio:
             docs = []
             for d in read_documents(samples, cfg.input, semantic_id=body.get("semantic_id") or None):
                 sid = d.semantic_id or urn_by_example.get(str(Path(d.source_file).resolve()))
-                docs.append(Document(d.data, self.rel(d.source_file), sid, d.meta))
+                docs.append(dataclasses.replace(d, source_file=self.rel(d.source_file), semantic_id=sid))
             pasted = (body.get("pasted") or "").strip()
             if pasted:
                 try:
-                    data = json.loads(pasted)
-                except json.JSONDecodeError as e:
+                    data = strict_loads(pasted)          # o mesmo leitor estrito dos ficheiros
+                except ValueError as e:
                     return {"ok": False, "stage": "pasted", "error": f"JSON colado inválido: {e}"}
                 fallback = body.get("semantic_id") or (next(iter(urn_by_example.values()), None) if len(urn_by_example) == 1 else None)
-                docs += [Document(d, "(colado)", fallback) for d in (data if isinstance(data, list) else [data])]
+                if isinstance(data, list):
+                    docs += [Document(d, "(colado)", fallback, index=i) for i, d in enumerate(data)]
+                else:
+                    docs.append(Document(data, "(colado)", fallback))
             engine = Engine(cfg)
             routed = engine.route(docs)
             try:
-                results = engine.run(docs)
+                # partial: um documento rejeitado não esconde as linhas dos outros; aparece no relatório
+                results = engine.run(docs, partial=True)
             except (TransformError, ConfigError) as e:
                 return {"ok": False, "stage": "run", "error": self.short(str(e)),
-                        "validation": engine.validation, "warnings": [self.short(m) for m in cap.messages]}
+                        "validation": engine.validation, "warnings": [self.short(m) for m in cap.messages],
+                        "report": _report_view(engine.report)}
         finally:
             logger.removeHandler(cap)
 
-        tables = []
+        tables, write_check = [], []
         for name, res in results.items():
+            try:                        # a mesma pré-verificação da escrita que o --dry-run faz
+                check_table(res)
+                if res.rows:
+                    check_offline(res)
+            except WriteCheckError as e:
+                write_check.append(str(e))
             tables.append({
                 "name": name, "mode": res.spec.mode, "keys": res.spec.keys, "partition_by": res.spec.partition_by,
                 "explode": res.spec.explode,
                 "columns": [{"name": c, "type": t, "athena": athena_type(t)} for c, t in res.types.items()],
-                "rows": _jsonable(res.rows[:MAX_ROWS]), "total": len(res.rows), "skipped": res.skipped,
-                "check_failures": res.check_failures, "ddl": ddl(res, cfg.target),
+                "rows": [_display_row(r, res.types) for r in res.rows[:MAX_ROWS]], "total": len(res.rows),
+                "skipped": res.skipped, "check_failures": res.check_failures, "ddl": ddl(res, cfg.target),
             })
         unmatched = [d.source_file for d in docs if not any(d in routed.get(s.name, []) for s in cfg.submodels)]
         return {
@@ -437,6 +532,8 @@ class Studio:
             "tables": tables,
             "validation": engine.validation,
             "warnings": list(dict.fromkeys(self.short(m) for m in cap.messages)),
+            "report": _report_view(engine.report),
+            "write_check": write_check,
         }
 
     def transforms(self) -> list[dict]:
@@ -504,7 +601,7 @@ def make_handler(studio: Studio):
                     return self._json(studio.preview(b))
                 if route == ("PUT", "/api/file"):
                     text = render(b["config"]) if b.get("config") is not None else b["text"]
-                    return self._json(studio.save(b["path"], text, b.get("mtime")))
+                    return self._json(studio.save(b["path"], text, b.get("version")))
                 if route == ("GET", "/api/transforms"):
                     return self._json(studio.transforms())
                 raise ApiError(HTTPStatus.NOT_FOUND, "Rota desconhecida")

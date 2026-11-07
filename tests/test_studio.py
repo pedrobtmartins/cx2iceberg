@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -83,21 +84,59 @@ def test_preview_with_config_dict(root):
     cfg["submodels"][0]["tables"][0]["mode"] = "nope"
     bad = s.preview({"config": cfg, "samples": []})
     assert bad["stage"] == "config" and "nope" in bad["error"]
-    run_err = s.preview({"config": normalize(yaml.safe_load(CFG)), "samples": [], "pasted": '{"id": "Z", "n": 1.5}'})
-    assert run_err["stage"] == "run" and "não é inteiro" in run_err["error"]
+    # um documento rejeitado já não transforma a pré-visualização num erro: aparece no relatório, com o motivo,
+    # e as linhas dos outros documentos continuam visíveis (antes: só a mensagem de erro)
+    pasted = '[{"id": "Z", "n": 1.5}, {"id": "Y", "n": 2}]'
+    part = s.preview({"config": normalize(yaml.safe_load(CFG)), "samples": [], "pasted": pasted})
+    assert part["ok"] and part["report"]["status"] == "partial" and part["summary"]["rows"] == 1
+    err = next(g for g in part["report"]["groups"] if g["kind"] == "error")
+    assert err["column"] == "n" and err["reason_label"] == "valor inválido" and "não é inteiro" in err["examples"][0]["message"]
+    assert part["report"]["rejected_documents"][0]["file"] == "(colado)"
+
+
+def test_preview_shows_values_as_they_are_written(root):
+    # o browser (números do JavaScript) mostrava 9007199254740993 como ...992 e um float 1.1 como 1.100000023841858
+    cfg = {"submodels": [{"name": "s", "tables": [{"name": "t", "columns": {
+        "big": "big ::bigint", "f": "f ::float", "d": "d ::decimal(5,2)", "xs": "xs ::array<bigint>",
+        "fs": "fs ::array<float>"}}]}]}
+    r = Studio(root).preview({"config": cfg, "samples": [], "pasted": '{"big": 9007199254740993, "f": 1.1, "d": 1.5, '
+                                                                      '"xs": [9007199254740993, 1], "fs": [0.1, 2.5]}'})
+    row = r["tables"][0]["rows"][0]
+    assert row == {"big": "9007199254740993", "f": 1.1, "d": "1.50", "xs": ["9007199254740993", 1], "fs": [0.1, 2.5]}
+    assert json.loads(json.dumps(row))["f"] == 1.1
+
+
+def test_preview_runs_the_write_precheck(root):
+    cfg = {"submodels": [{"name": "s", "tables": [{"name": "t", "partition_by": ["contry"], "columns": {"country": "c"}}]}]}
+    r = Studio(root).preview({"config": cfg, "samples": [], "pasted": '{"c": "PT"}'})
+    assert r["ok"] and "partition_by usa ['contry']" in r["write_check"][0]
 
 
 def test_save_conflicts(root):
     s = Studio(root)
     f = s.load("cfg/a.yaml")
-    r = s.save("cfg/a.yaml", CFG + "# x\n", f["mtime"])
+    r = s.save("cfg/a.yaml", CFG + "# x\n", f["version"])
     with pytest.raises(ApiError, match="alterado fora"):
-        s.save("cfg/a.yaml", CFG, f["mtime"])                          # mtime antigo
+        s.save("cfg/a.yaml", CFG, f["version"])                        # versão antiga
     with pytest.raises(ApiError, match="Já existe"):
         s.save("cfg/a.yaml", CFG, None)                                # ficheiro novo com nome ocupado
-    s.save("cfg/a.yaml", CFG, r["mtime"])
+    s.save("cfg/a.yaml", CFG, r["version"])
     with pytest.raises(ApiError, match=".yaml"):
         s.save("data/d.json", "{}", None)
+
+
+def test_external_edit_with_the_same_mtime_is_a_conflict(root):
+    # antes a versão era o mtime: com a mesma marca de tempo (FS com resolução de 1-2 s, Docker/WSL, cp -p) a
+    # edição feita fora era apagada pelo studio sem aviso; o teste anterior dependia da resolução do relógio
+    s = Studio(root)
+    f = s.load("cfg/a.yaml")
+    p = root / "cfg" / "a.yaml"
+    st = p.stat()
+    p.write_text(CFG + "# editado fora\n")
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+    with pytest.raises(ApiError, match="alterado fora"):
+        s.save("cfg/a.yaml", CFG + "# do studio\n", f["version"])
+    assert p.read_text().endswith("# editado fora\n")
 
 
 def test_new_config_from_model_and_validation(pcf_root):
@@ -204,5 +243,16 @@ def test_http_guard(root):
                                      data=json.dumps({"path": "cfg/new.yaml", "config": normalize(yaml.safe_load(CFG))}).encode())
         assert json.load(urllib.request.urlopen(put))["path"] == "cfg/new.yaml"
         assert (root / "cfg" / "new.yaml").read_text().startswith("# Gerado pelo cx2iceberg studio")
+        # o que a interface faz: abrir (versão), gravar com essa versão, e uma versão antiga dá 409
+        def call(method, route, body):
+            r = urllib.request.Request(base + route, method=method, headers={"Content-Type": "application/json"},
+                                       data=json.dumps(body).encode())
+            return json.load(urllib.request.urlopen(r))
+        opened = call("POST", "/api/load", {"path": "cfg/new.yaml"})
+        saved = call("PUT", "/api/file", {"path": "cfg/new.yaml", "config": opened["config"], "version": opened["version"]})
+        assert saved["version"] and "mtime" not in saved
+        with pytest.raises(urllib.error.HTTPError) as e:
+            call("PUT", "/api/file", {"path": "cfg/new.yaml", "text": CFG + "# velho\n", "version": "0" * 64})
+        assert e.value.code == 409
     finally:
         httpd.shutdown()

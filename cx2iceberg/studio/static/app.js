@@ -13,7 +13,7 @@ const store = {
 const state = {
   catalog: null, catalogError: null, expanded: null, statuses: {},
   files: { configs: [], samples: [] },
-  cfg: null, path: null, mtime: null, isNew: false, dirty: false,
+  cfg: null, path: null, version: null, isNew: false, dirty: false,
   si: 0, ti: 0, ci: null, pick: false,
   fields: null, fieldsKey: "", fieldIndex: {}, fieldsReason: "", example: null,
   samples: new Set(), result: null, last: null, timer: 0, inflight: null,
@@ -59,7 +59,7 @@ const STEPS = {
   map: { label: "Traduzir valores", arg: "pairs" },
   multiply: { label: "Multiplicar por", arg: "number" },
   divide: { label: "Dividir por", arg: "number" },
-  round: { label: "Arredondar (casas decimais)", arg: "number" },
+  round: { label: "Arredondar (casas decimais e modo)", arg: "round" },
   clamp: { label: "Limitar entre mínimo e máximo", arg: "minmax" },
   unit_convert: { label: "Converter unidade para", arg: "unit" },
   first: { label: "Ficar com o primeiro da lista" },
@@ -70,6 +70,8 @@ const STEPS = {
   hash: { label: "Substituir por um código (anonimizar)" },
   uuid5: { label: "Gerar um UUID a partir do valor" },
 };
+const ROUND_MODES = [["half_up", "metade para cima (0,125 → 0,13)"], ["half_even", "metade para o par (0,125 → 0,12)"],
+  ["half_down", "metade para baixo"], ["up", "afastar do zero"], ["down", "truncar (para o zero)"], ["ceiling", "para cima"], ["floor", "para baixo"]];
 const ON_FAIL = [["warn", "Avisar e manter o valor"], ["null", "Deixar a célula vazia"], ["skip_row", "Ignorar a linha"], ["fail", "Parar a carga"]];
 const COL_KEYS = new Set(["path", "type", "transform", "default", "check", "const", "required", "on_error", "comment"]);
 
@@ -257,13 +259,13 @@ async function openConfig(path) {
   if (state.dirty && !confirm("Há alterações por guardar. Abrir outra configuração e perdê-las?")) return;
   try {
     const r = await api("POST", "/api/load", { path });
-    if (!r.config) { setConfig(null, path, r.mtime, false); openAdvanced(r.text, r.error); return; }
-    setConfig(r.config, path, r.mtime, false);
+    if (!r.config) { setConfig(null, path, r.version, false); openAdvanced(r.text, r.error); return; }
+    setConfig(r.config, path, r.version, false);
     showPane("fields");
   } catch (e) { toast(e.message, "error"); }
 }
-function setConfig(cfg, path, mtime, isNew) {
-  Object.assign(state, { cfg, path, mtime, isNew, dirty: false, si: 0, ti: 0, ci: null, pick: false, result: null, last: null, fieldsKey: "" });
+function setConfig(cfg, path, version, isNew) {
+  Object.assign(state, { cfg, path, version, isNew, dirty: false, si: 0, ti: 0, ci: null, pick: false, result: null, last: null, fieldsKey: "" });
   const t = table();
   state.ci = t ? Object.keys(t.columns || {})[0] ?? null : null;
   state.samples = new Set(store.get(`cx2.samples:${path}`, []));
@@ -284,8 +286,8 @@ function updateBar() {
 async function save() {
   if (!state.cfg || !state.path) return;
   try {
-    const r = await api("PUT", "/api/file", { path: state.path, config: state.cfg, mtime: state.isNew ? null : state.mtime });
-    Object.assign(state, { mtime: r.mtime, isNew: false, dirty: false });
+    const r = await api("PUT", "/api/file", { path: state.path, config: state.cfg, version: state.isNew ? null : state.version });
+    Object.assign(state, { version: r.version, isNew: false, dirty: false });
     store.set(`cx2.samples:${state.path}`, [...state.samples]);
     updateBar();
     toast(`Guardado em ${r.path}`);
@@ -590,6 +592,10 @@ function renderSteps(c) {
     let editor = null;
     if (def?.arg === "text") editor = h("input", { type: "text", value: a ?? "", onchange: (e) => setArg(e.target.value) });
     else if (def?.arg === "number") editor = h("input", { type: "number", step: "any", value: a ?? "", onchange: (e) => setArg(Number(e.target.value)) });
+    else if (def?.arg === "round") editor = [
+      h("input", { type: "number", step: "1", "aria-label": "casas decimais", value: a?.digits ?? 2, onchange: (e) => setArg({ ...a, digits: Math.trunc(Number(e.target.value)) }) }),
+      h("select", { "aria-label": "modo de arredondamento", onchange: (e) => setArg({ ...a, mode: e.target.value }) },
+        ROUND_MODES.map(([k, l]) => h("option", { value: k, selected: (a?.mode || "half_up") === k }, l)))];
     else if (def?.arg === "unit") editor = h("select", { onchange: (e) => setArg({ to: e.target.value }) }, UNITS.map((u) => h("option", { value: u, selected: a?.to === u }, u)));
     else if (def?.arg === "minmax") editor = [
       h("input", { type: "number", step: "any", placeholder: "mínimo", value: a?.min ?? "", onchange: (e) => setArg({ ...a, min: e.target.value === "" ? undefined : Number(e.target.value) }) }),
@@ -609,7 +615,7 @@ function renderSteps(c) {
   const add = h("select", { "aria-label": "Acrescentar passo", onchange: (e) => {
     const n = e.target.value; if (!n) return;
     const d = STEPS[n];
-    const init = { text: "", number: 1, unit: { to: "kilogram" }, minmax: { min: 0 }, pair: ["", ""], pairs: { _ignore_case: true } }[d.arg];
+    const init = { text: "", number: 1, round: { digits: 2, mode: "half_up" }, unit: { to: "kilogram" }, minmax: { min: 0 }, pair: ["", ""], pairs: { _ignore_case: true } }[d.arg];
     write([...list, d.arg ? { [n]: init } : n]);
   } }, h("option", { value: "" }, "+ Acrescentar passo…"), Object.entries(STEPS).map(([k, d]) => h("option", { value: k }, d.label)));
   return h("div", {}, items.length ? h("ul", { class: "steps" }, items) : null, add);
@@ -666,11 +672,12 @@ function renderResult(r) {
     const notes = [];
     if (r.summary.unmatched?.length) notes.push(h("li", {}, `Não usados (não correspondem a nenhum submodelo): ${r.summary.unmatched.join(", ")}`));
     v.forEach((d) => d.errors.slice(0, 6).forEach((e) => notes.push(h("li", {}, `${d.source}: ${e.path || "(raiz)"}: ${e.message}`))));
-    (r.warnings || []).filter((w) => !w.includes("não cumpre o schema")).slice(0, 6).forEach((w) => notes.push(h("li", {}, w)));
     msg.hidden = !notes.length;
     msg.className = "result-msg warn";
     msg.replaceChildren(h("strong", {}, "A rever"), h("ul", {}, notes));
   }
+  renderWriteCheck(r.ok ? r.write_check : null);
+  renderReport(r.report || (r.ok ? null : res?.report));
   if (!res) { $("#summary").textContent = "Sem resultado"; $("#grid").replaceChildren(); val.textContent = ""; return; }
   const s = res.summary;
   if (!s.documents) {
@@ -681,7 +688,9 @@ function renderResult(r) {
     renderGrid(res.tables.find((x) => x.name === sanitize(table()?.name || "")) || res.tables[0]);
     return;
   }
-  $("#summary").textContent = `${s.documents} documento${s.documents === 1 ? "" : "s"} de teste → ${s.rows} linha${s.rows === 1 ? "" : "s"}${r.ok ? "" : " (último resultado válido)"}`;
+  const rejected = res.report?.rejected_total || 0;
+  $("#summary").textContent = `${s.documents} documento${s.documents === 1 ? "" : "s"} de teste → ${s.rows} linha${s.rows === 1 ? "" : "s"}`
+    + (rejected ? ` · ${rejected} rejeitado${rejected === 1 ? "" : "s"}` : "") + (r.ok ? "" : " (último resultado válido)");
   $("#summary").style.opacity = r.ok ? "1" : "0.55";
   const hasModel = state.cfg?.submodels?.some((x) => x.model);
   if (!hasModel) { val.textContent = ""; val.className = "validation"; }
@@ -701,16 +710,21 @@ function renderGrid(t) {
   const g = $("#grid");
   if (!t) { g.replaceChildren(h("tbody", {}, h("tr", {}, h("td", { class: "empty" }, "Sem linhas. Escolha dados de teste à esquerda.")))); return; }
   const cf = t.check_failures || {};
+  const marks = columnMarks(state.result?.report, t.name);
   const head = h("tr", {}, t.columns.map((c) => h("th", { scope: "col", class: c.name.startsWith("cx_") ? "meta-col" : null },
     h("button", { type: "button", onclick: () => { if (table()?.columns?.[c.name]) { state.ci = c.name; renderAll(); showPane("table"); } } },
-      h("span", { class: "col-name" }, c.name, cf[c.name] ? ` ⚠ ${cf[c.name]}` : ""), h("span", { class: "col-type" }, typeLabel(c.type))))));
-  const rows = t.rows.length ? t.rows.map((r) => h("tr", {}, t.columns.map((c) => cell(r[c.name]))))
+      h("span", { class: "col-name" }, c.name, cf[c.name] ? ` ⚠ ${cf[c.name]}` : "",
+        marks[c.name] ? h("span", { class: `mark ${KIND_CLASS[marks[c.name].kind]}`, title: marks[c.name].title }, ` ● ${marks[c.name].count}`) : null),
+      h("span", { class: "col-type" }, typeLabel(c.type))))));
+  const rows = t.rows.length ? t.rows.map((r) => h("tr", {}, t.columns.map((c) => cell(r[c.name], c.type))))
     : [h("tr", {}, h("td", { class: "empty", colspan: t.columns.length }, "Sem linhas para os dados de teste."))];
   g.replaceChildren(h("thead", {}, head), h("tbody", {}, rows));
 }
-function cell(v) {
+/* números grandes e decimais chegam como texto (exactos); o alinhamento vem do tipo da coluna */
+const NUMERIC = /^(tinyint|smallint|int|bigint|double|float|decimal)/;
+function cell(v, type) {
   if (v === null || v === undefined) return h("td", { class: "null" }, "vazio");
-  if (typeof v === "number") return h("td", { class: "num" }, String(v));
+  if (typeof v === "number" || (typeof v === "string" && NUMERIC.test(type || ""))) return h("td", { class: "num" }, String(v));
   if (typeof v === "boolean") return h("td", {}, v ? "sim" : "não");
   if (typeof v === "object") {
     const flat = JSON.stringify(v);
@@ -719,6 +733,66 @@ function cell(v) {
       h("pre", {}, JSON.stringify(v, null, 2))));
   }
   return h("td", { title: String(v) }, String(v));
+}
+
+/* ------------------------------------------------------------ relatório */
+/* O mesmo relatório do CLI: erros (documentos rejeitados), perdas declaradas e avisos, contados por
+   tabela/coluna/motivo. Antes o studio só mostrava as primeiras mensagens do log. */
+const KIND_CLASS = { error: "bad", declared: "declared", warning: "warn" };
+const KIND_ORDER = ["error", "declared", "warning"];
+const KIND_HELP = {
+  error: "Estes documentos não seriam escritos (nenhuma linha deles, em nenhuma tabela).",
+  declared: "Perdas que a configuração declara (on_error, default, where, rounding…): seguem, e ficam contadas.",
+  warning: "Seguem, mas convém rever.",
+};
+function columnMarks(rep, tableName) {
+  const out = {};
+  (rep?.groups || []).filter((g) => g.table === tableName && g.column).forEach((g) => {
+    const m = out[g.column] || (out[g.column] = { count: 0, kind: g.kind, lines: [] });
+    m.count += g.count;
+    if (KIND_ORDER.indexOf(g.kind) < KIND_ORDER.indexOf(m.kind)) m.kind = g.kind;
+    m.lines.push(`${g.reason_label} → ${g.action_label}: ${g.count}`);
+  });
+  Object.values(out).forEach((m) => { m.title = m.lines.join("\n"); });
+  return out;
+}
+function where(g) {
+  return g.table ? (g.column ? `${g.table}.${g.column}` : g.table) : "(documento)";
+}
+function place(e) {
+  return `${e.file || ""}${e.document != null ? `#${e.document}` : ""}${e.row ? ` ${e.row}` : ""}`;
+}
+function renderReport(rep) {
+  const box = $("#report");
+  const groups = rep?.groups || [];
+  if (!groups.length) { box.hidden = true; box.replaceChildren(); return; }
+  const parts = [h("h2", {}, "Relatório da carga")];
+  if (rep.rejected_total) {
+    parts.push(h("p", { class: "report-rejected" }, h("strong", {}, `${rep.rejected_total} documento${rep.rejected_total === 1 ? "" : "s"} rejeitado${rep.rejected_total === 1 ? "" : "s"}: `),
+      rep.rejected_documents.map((d) => `${d.file}${d.document != null ? `#${d.document}` : ""} (${d.errors} erro${d.errors === 1 ? "" : "s"})`).join(", ")));
+  }
+  KIND_ORDER.forEach((kind) => {
+    const gs = groups.filter((g) => g.kind === kind);
+    if (!gs.length) return;
+    const total = gs.reduce((a, g) => a + g.count, 0);
+    parts.push(h("div", { class: `report-kind ${KIND_CLASS[kind]}` },
+      h("h3", {}, `${gs[0].kind_title} (${total})`), h("p", { class: "hint" }, KIND_HELP[kind]),
+      gs.map((g) => h("details", { class: "report-group" },
+        h("summary", {}, h("span", { class: "rg-where" }, where(g)), ` — ${g.reason_label} → ${g.action_label}`, h("span", { class: "rg-count" }, String(g.count))),
+        h("ul", {}, g.examples.map((e) => {
+          const showValue = e.value != null && !String(e.message).includes(e.value);   // a mensagem já o cita
+          return h("li", {}, place(e) ? h("span", { class: "rg-place" }, place(e) + ": ") : null,
+            showValue ? h("code", {}, e.value) : null, showValue ? " " : null, e.message);
+        }))))));
+  });
+  box.replaceChildren(...parts);
+  box.hidden = false;
+}
+function renderWriteCheck(problems) {
+  const box = $("#write-check");
+  if (!problems?.length) { box.hidden = true; box.replaceChildren(); return; }
+  box.replaceChildren(h("strong", {}, "A escrita seria bloqueada (nada seria escrito)"), h("ul", {}, problems.map((p) => h("li", {}, p))));
+  box.hidden = false;
 }
 
 /* ------------------------------------------------------------- avançado */
@@ -733,8 +807,8 @@ async function openAdvanced(text, error) {
 async function applyAdvanced() {
   try {
     const r = await api("POST", "/api/parse", { text: $("#adv-text").value });
-    const keep = { path: state.path, mtime: state.mtime, isNew: state.isNew, samples: state.samples };
-    setConfig(r.config, keep.path, keep.mtime, keep.isNew);
+    const keep = { path: state.path, version: state.version, isNew: state.isNew, samples: state.samples };
+    setConfig(r.config, keep.path, keep.version, keep.isNew);
     state.samples = keep.samples;
     state.dirty = true; updateBar();
     $("#advanced-pane").hidden = true;

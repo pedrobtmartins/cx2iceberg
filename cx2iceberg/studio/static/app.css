@@ -171,7 +171,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
 .result-msg { background: var(--danger-soft); color: var(--danger); padding: 10px 12px; font-size: 14px; margin-bottom: 10px; overflow-wrap: anywhere; }
 .result-msg.warn { background: var(--warn-soft); color: var(--ink); }
 .result-msg ul { margin: 6px 0 0; padding-left: 18px; }
-.grid-wrap { flex: 1; min-height: 80px; overflow: auto; background: var(--paper); margin-bottom: 14px; }
+.grid-wrap { flex: 1; min-height: 180px; overflow: auto; background: var(--paper); margin-bottom: 14px; }
 .grid { border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; min-width: 100%; }
 .grid th, .grid td { padding: 6px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 .grid thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 1; border-bottom: 0; white-space: nowrap; }
@@ -227,3 +227,22 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* relatório da carga (pré-visualização) */
+.report { flex: none; max-height: 40vh; overflow: auto; background: var(--paper); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+.report h2 { margin: 0 0 8px; font-size: 16px; }
+.report h3 { margin: 10px 0 2px; font-size: 14px; }
+.report .hint { margin: 0 0 4px; color: var(--ink-2); font-size: 13px; }
+.report-rejected { background: var(--danger-soft); color: var(--danger); padding: 6px 10px; margin: 0 0 6px; overflow-wrap: anywhere; }
+.report-kind.bad h3 { color: var(--danger); }
+.report-kind.warn h3 { color: var(--warn); }
+.report-kind.declared h3 { color: var(--accent); }
+.report-group summary { cursor: pointer; padding: 3px 0; }
+.report-group .rg-where { font-family: var(--mono); font-size: 13px; }
+.report-group .rg-count { float: right; font-variant-numeric: tabular-nums; font-weight: 650; }
+.report-group ul { margin: 2px 0 6px; padding-left: 18px; color: var(--ink-2); overflow-wrap: anywhere; }
+.report-group code { font-family: var(--mono); font-size: 12.5px; background: var(--surface); padding: 0 3px; }
+.grid th .mark { font-weight: 650; font-size: 12px; }
+.grid th .mark.bad { color: var(--danger); }
+.grid th .mark.warn { color: var(--warn); }
+.grid th .mark.declared { color: var(--accent); }

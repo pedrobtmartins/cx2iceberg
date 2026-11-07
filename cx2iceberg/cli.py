@@ -9,6 +9,7 @@ import sys
 from . import config as C
 from .engine import Engine, TableResult, TransformError
 from .reader import read_documents
+from .report import Report
 from .transforms import REGISTRY
 from .writer import AthenaIcebergWriter, ddl, write_local
 
@@ -23,34 +24,89 @@ def _preview(results: dict[str, TableResult], n: int):
             print("    " + json.dumps(r, ensure_ascii=False, default=str))
 
 
-def _transform(args) -> tuple[C.Config, dict[str, TableResult]]:
+# Códigos de saída: 0 = tudo escrito; 2 = carga parcial (documentos rejeitados, os restantes escritos);
+# 1 = falha (configuração, limite de erros, escrita): nada escrito pelo cx2iceberg nesta fase.
+EXIT_PARTIAL = 2
+
+
+def _save_report(report: Report, args) -> None:
+    """Chamado uma só vez, no fim (também quando a escrita falha): o relatório diz tudo."""
+    report.finish_write()
+    report.close()
+    print(report.render(), file=sys.stderr)
+    if getattr(args, "report", None):
+        with open(args.report, "w", encoding="utf-8") as f:
+            json.dump(report.to_dict(), f, ensure_ascii=False, indent=2, allow_nan=False)
+
+
+def _transform(args) -> tuple[C.Config, dict[str, TableResult], Report]:
     cfg = C.load(args.config)
     docs = list(read_documents(args.inputs, cfg.input, semantic_id=args.semantic_id))
     if not docs:
         sys.exit("Nenhum documento encontrado nos inputs")
-    results = Engine(cfg, match_all=args.match_all or None).run(docs)
+    report = Report(samples=args.samples, max_errors=args.max_errors, details_path=args.report_details)
+    try:
+        # partial=True: os documentos rejeitados ficam de fora e os restantes seguem; o relatório diz quais
+        results = Engine(cfg, match_all=args.match_all or None, report=report).run(docs, partial=True)
+    except (C.ConfigError, TransformError):
+        _save_report(report, args)
+        raise
     if args.table:
         results = {k: v for k, v in results.items() if k in args.table}
-    return cfg, results
+    return cfg, results, report
+
+
+def _finish(report: Report, written: bool) -> None:
+    if report.status == "partial":
+        what = "as linhas dos restantes foram escritas" if written else "nada foi escrito (pré-visualização)"
+        print(f"Carga parcial: {len(report.rejected)} documento(s) rejeitado(s); {what}.", file=sys.stderr)
+        sys.exit(EXIT_PARTIAL)
+
+
+def _precheck_offline(results: dict[str, TableResult], report: Report) -> None:
+    """No dry-run, a mesma pré-verificação da escrita que não precisa da AWS (tipos Arrow, awswrangler, partições)."""
+    from .writer import WriteCheckError, check_offline, check_table
+
+    problems = []
+    for res in results.values():
+        try:
+            check_table(res)
+            if res.rows:
+                check_offline(res)
+        except WriteCheckError as e:
+            problems.append(str(e))
+    if problems:
+        raise WriteCheckError("pré-verificação da escrita:\n  " + "\n  ".join(problems))
 
 
 def cmd_run(args):
-    cfg, results = _transform(args)
-    if args.out:
-        for p in write_local(results, args.out, args.format):
-            print(f"escrito {p}")
-    if args.dry_run or args.out:
-        _preview(results, args.show)
-        return
-    written = AthenaIcebergWriter(cfg.target).write(results)
-    for t, n in written.items():
-        print(f"{cfg.target['database']}.{t}: {n} linha(s)")
+    cfg, results, report = _transform(args)
+    athena = not (args.dry_run or args.out)
+    try:
+        if args.out:
+            for p in write_local(results, args.out, args.format, report=report):
+                print(f"escrito {p}")
+        if not athena:
+            _precheck_offline(results, report)
+            _preview(results, args.show)
+        else:
+            for t, n in AthenaIcebergWriter(cfg.target, report=report).write(results).items():
+                print(f"{cfg.target['database']}.{t}: {n} linha(s)")
+    except Exception as e:
+        if report.failure is None:   # ex.: falha antes da 1.ª tabela (ligação, base de dados)
+            report.failure = f"escrita: {e}"
+        raise SystemExit(f"Erro de escrita: {e}") from e
+    finally:
+        _save_report(report, args)
+    _finish(report, written=athena)
 
 
 def cmd_ddl(args):
-    cfg, results = _transform(args)
+    cfg, results, report = _transform(args)
+    _save_report(report, args)
     for res in results.values():
         print(ddl(res, cfg.target) + "\n")
+    _finish(report, written=False)
 
 
 def cmd_validate(args):
@@ -70,7 +126,11 @@ def cmd_init(args):
 
     if not args.inputs and not args.schema:
         sys.exit("Indique JSONs de exemplo e/ou --schema <Aspect-schema.json>")
-    docs = [d.data for d in read_documents(args.inputs, {"list_is_document": False})] if args.inputs else []
+    read = list(read_documents(args.inputs, {"list_is_document": False})) if args.inputs else []
+    bad = [f"{d.source_file}: {d.error}" for d in read if d.error]
+    if bad:
+        sys.exit("Não foi possível ler:\n  " + "\n  ".join(bad))
+    docs = [d.data for d in read]
     semantic_id = args.semantic_id
     if args.schema:
         skel, urn = load_skeleton(args.schema)
@@ -113,6 +173,10 @@ def main(argv=None):
         sp.add_argument("--semantic-id", help="semantic id (URN) a aplicar a todos os documentos")
         sp.add_argument("--match-all", action="store_true", help="um documento pode alimentar vários submodelos")
         sp.add_argument("--table", action="append", help="processar só esta(s) tabela(s)")
+        sp.add_argument("--report", help="grava o relatório (JSON: contagens e exemplos por tabela/coluna/motivo)")
+        sp.add_argument("--report-details", help="grava todos os eventos, um por linha (JSON Lines), sem os guardar em memória")
+        sp.add_argument("--max-errors", type=int, default=1000, help="pára a carga ao fim de N erros (omissão: 1000)")
+        sp.add_argument("--samples", type=int, default=20, help="exemplos guardados por grupo do relatório (omissão: 20)")
 
     r = sub.add_parser("run", help="transformar e escrever no Athena")
     common(r)
