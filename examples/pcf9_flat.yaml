@@ -1,7 +1,7 @@
-# Configuração gerada automaticamente por `cx2iceberg init`.
-# Reveja nomes, tipos e chaves; remova as colunas que não interessam.
-# Números sem tipo no schema são sugeridos como double (JSON não distingue 1 de 1.0).
-# Referência completa: README.md
+# Configuration generated automatically by `cx2iceberg init`.
+# Review names, types and keys; remove the columns you do not need.
+# Numbers without a type in the schema are suggested as double (JSON does not tell 1 from 1.0).
+# Full reference: README.md
 target:
   database: ${ATHENA_DATABASE:-catenax}
   location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}

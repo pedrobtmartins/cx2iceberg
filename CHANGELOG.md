@@ -1,153 +1,167 @@
-# 0.2.0 — Alterações de comportamento
+# 0.3.0 — English
 
-Revisão do caminho de cada valor, do JSON à tabela Iceberg, para que **nenhum valor seja alterado, perdido ou mal lido sem aviso**. Uma regra para tudo:
+The project is now in English: error messages, the load report, CLI help and output, logs, the Studio interface, code comments, examples and documentation.
 
-* **perda não declarada → erro** (o documento é rejeitado, ou a carga pára antes de escrever);
-* **perda declarada na configuração → permitida, e contada no relatório**.
+What did not change:
 
-Não há modo de compatibilidade. O que deixa de carregar, ou passa a falhar, está na última secção, com o que fazer.
+* the configuration format, the report's JSON keys and codes (`kind`, `reason`, `action`, `status`, …), exit codes and table output;
+* `to_bool` still recognises the Portuguese `sim`/`não` (and `s`/`nao`) besides `yes`/`no`, `y`/`n`, `true`/`false` and `1`/`0`.
 
-## Relatório da carga
+What may need attention:
 
-| Antes | Agora |
+* anything that matched the text of messages or logs (for example a log alert on `Valor anulado`) must use the English text (`Value set to null`);
+* in the Studio, a new child table gets the position column `position` (before: `posicao`), a new table is called `table_N` (before: `tabela_N`), and a field name that sanitizes to nothing becomes `column` (before: `coluna`). Configurations already saved keep their names.
+
+# 0.2.0 — Behaviour changes
+
+A review of the path of each value, from the JSON to the Iceberg table, so that **no value is changed, lost or misread without a warning**. One rule for everything:
+
+* **undeclared loss → error** (the document is rejected, or the load stops before writing);
+* **loss declared in the configuration → allowed, and counted in the report**.
+
+There is no compatibility mode. What no longer loads, or now fails, is in the last section, with what to do.
+
+## Load report
+
+| Before | Now |
 |---|---|
-| Não havia relatório. Valores anulados (`on_error: null`), linhas ignoradas e `default` aplicados não ficavam registados, ou ficavam só no log, uma linha por valor | Relatório por tabela, coluna, ficheiro, documento e linha (`childItems[1]`), com três tipos de evento: erro, perda declarada e aviso. Opções `--report`, `--report-details`, `--samples` e `--max-errors`. Em memória ficam só as contagens e os primeiros exemplos de cada grupo |
-| Um documento com erro parava a carga toda | O documento é rejeitado, os outros seguem, e o relatório diz quais pedir de novo. Códigos de saída: `0` ok, `2` parcial, `1` falha. A Lambda continua tudo ou nada |
-| A Lambda registava o relatório em `INFO`, invisível com o nível por omissão `WARNING` | `WARNING` quando há avisos ou perdas declaradas |
+| There was no report. Values set to null (`on_error: null`), skipped rows and applied `default`s were not recorded, or only in the log, one line per value | A report per table, column, file, document and row (`childItems[1]`), with three kinds of event: error, declared loss and warning. Options `--report`, `--report-details`, `--samples` and `--max-errors`. Only the counts and the first examples of each group are kept in memory |
+| A document with an error stopped the whole load | The document is rejected, the others go on, and the report says which ones to ask for again. Exit codes: `0` ok, `2` partial, `1` failure. The Lambda is still all or nothing |
+| The Lambda logged the report at `INFO`, invisible with the default `WARNING` level | `WARNING` when there are warnings or declared losses |
 
-## Leitura dos ficheiros
+## Reading the files
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Um ficheiro ilegível (não UTF-8, JSON inválido, aninhamento excessivo, inteiro com mais de 4300 dígitos) parava a carga toda | Fica como documento rejeitado, com a razão, e os outros seguem |
-| `NaN`/`Infinity` aceites; chave repetida (`{"co2": 2.0, "co2": 20.0}`) ficava com o último valor | Rejeitado |
-| Números com mais de 15 algarismos perdiam precisão (`1234567890123456789.0` → `…768`) | O texto original é guardado: `bigint` e `decimal` recebem o valor exacto |
-| Topo `null`/`42`, ou um elemento de lista que não é objecto, dava uma linha de nulos; um ficheiro vazio não dava sinal | Rejeitado; ficheiro vazio conta como aviso |
+| An unreadable file (not UTF-8, invalid JSON, too deeply nested, an integer with more than 4300 digits) stopped the whole load | It becomes a rejected document, with the reason, and the others go on |
+| `NaN`/`Infinity` accepted; a repeated key (`{"co2": 2.0, "co2": 20.0}`) kept the last value | Rejected |
+| Numbers with more than 15 digits lost precision (`1234567890123456789.0` → `…768`) | The original text is kept: `bigint` and `decimal` get the exact value |
+| A top-level `null`/`42`, or a list element that is not an object, gave a row of nulls; an empty file gave no sign | Rejected; an empty file counts as a warning |
 
-## Configuração
+## Configuration
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| YAML 1.1: `yes/no/on/off` eram booleanos (`map: {yes: Y, no: N, on: L, off: D}` ficava com duas traduções), `010` era octal, datas eram convertidas, uma chave repetida ficava com o último valor | YAML 1.2: só `true`/`false` são booleanos, sem conversão de datas, e chave repetida é erro |
-| `dedupe: "false"` era verdadeiro; uma chave mal escrita em `input:` era ignorada | Opções booleanas só aceitam `true`/`false`; chaves desconhecidas são erro |
-| Nomes e argumentos de transformações só falhavam nos dados (com `on_error: null`, anulavam a coluna inteira) | Validados ao carregar |
-| Caminhos mal formados só falhavam nos dados | Validados ao carregar. Com `model.schema`, percorridos no schema, com sugestões |
-| Várias regras para a mesma tabela: valia a 1.ª (um `decimal` da 2.ª passava a `double`) | Têm de concordar em modo, chaves, partições e tipos |
-| Duas colunas com o mesmo nome depois de normalizado (`fossilGhg`, `fossil_ghg`): ficava uma | Erro |
+| YAML 1.1: `yes/no/on/off` were booleans (`map: {yes: Y, no: N, on: L, off: D}` kept two translations), `010` was octal, dates were converted, a repeated key kept the last value | YAML 1.2: only `true`/`false` are booleans, no date conversion, and a repeated key is an error |
+| `dedupe: "false"` was true; a misspelled key in `input:` was ignored | Boolean options only accept `true`/`false`; unknown keys are errors |
+| Transformation names and arguments only failed on the data (with `on_error: null`, they set the whole column to null) | Validated at load time |
+| Malformed paths only failed on the data | Validated at load time. With `model.schema`, walked in the schema, with suggestions |
+| Several rules for the same table: the 1st one won (a `decimal` from the 2nd became `double`) | They must agree on mode, keys, partitions and types |
+| Two columns with the same name after normalization (`fossilGhg`, `fossil_ghg`): one stayed | Error |
 
-## Caminhos e condições
+## Paths and conditions
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Um caminho com a forma errada (`childItems.quantity` sobre uma lista, índice numa lista desembrulhada) dava nulo | Erro, com o `on_error` da coluna |
-| Filtros comparavam texto: `[?qty=1]` não casava com `1.0`, `[?primary=true]` não casava com `true`; `[?key~a=b]` era partido no `=` | Comparação com tipo; o operador é o primeiro que aparece; tipos diferentes são erro |
-| `[*].campo` com elementos sem o campo ignorava-os | Erro, a não ser com `missing_elements: null` ou `skip` declarado (contado) |
-| Condições (`where`, `cases`, `check`, `match`) comparavam texto com texto: `10 > "9"` era falso, `"7" == 7` verdadeiro, regex sobre números | Comparação com tipo (números, datas como instantes); tipos diferentes são erro. No `match` contam como "não corresponde" |
-| `check.min` aceitava `true` como 1 e o texto `"5"` como 5 | Só números |
+| A path with the wrong shape (`childItems.quantity` on a list, an index on an unwrapped list) gave null | Error, with the column's `on_error` |
+| Filters compared text: `[?qty=1]` did not match `1.0`, `[?primary=true]` did not match `true`; `[?key~a=b]` was split at the `=` | Comparison with type; the operator is the first one that appears; different types are errors |
+| `[*].field` with elements without the field ignored them | Error, unless `missing_elements: null` or `skip` is declared (counted) |
+| Conditions (`where`, `cases`, `check`, `match`) compared text with text: `10 > "9"` was false, `"7" == 7` true, regex on numbers | Comparison with type (numbers, dates as instants); different types are errors. In `match` they count as "no match" |
+| `check.min` accepted `true` as 1 and the text `"5"` as 5 | Numbers only |
 
-## Transformações
+## Transformations
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Contas em float: `0.1 * 3` dava `0.30000000000000004`; `round(2.675, 2)` dava `2.67` | Contas decimais exactas; `round` exige o modo de arredondamento |
-| `sum`/`min`/`max` com nulos davam um total parcial; `max` de datas comparava texto; `["9", "10"]` ordenava como texto | Nulos são erro (ou `nulls: skip`, contado); datas como instantes; números em texto são erro |
-| `unit_convert` sem unidade, `to_bool` não reconhecido e `regex_extract` sem correspondência davam nulo | Erro, a não ser declarado (`from:`, `no_match: null`), e contado |
-| `to_string(True)` dava `'True'`; `join` com nulos dava `'a,'` | `true`; nulos são erro |
-| `distinct` e `null_if` misturavam `True`, `1` e `"1"` (`null_if: false` anulava o `0`); `map` traduzia o número `1` pela chave `"1"` | Comparação com tipo |
-| `clamp` alterava valores sem registo | Cada valor alterado fica contado |
-| `hash`/`uuid5` de números: `1` e `1.0` davam identidades diferentes | Só texto, objectos ou listas |
+| Float arithmetic: `0.1 * 3` gave `0.30000000000000004`; `round(2.675, 2)` gave `2.67` | Exact decimal arithmetic; `round` requires the rounding mode |
+| `sum`/`min`/`max` with nulls gave a partial total; `max` of dates compared text; `["9", "10"]` sorted as text | Nulls are errors (or `nulls: skip`, counted); dates as instants; numbers as text are errors |
+| `unit_convert` without a unit, an unrecognised `to_bool` and `regex_extract` without a match gave null | Error, unless declared (`from:`, `no_match: null`), and counted |
+| `to_string(True)` gave `'True'`; `join` with nulls gave `'a,'` | `true`; nulls are errors |
+| `distinct` and `null_if` mixed up `True`, `1` and `"1"` (`null_if: false` set `0` to null); `map` translated the number `1` with the key `"1"` | Comparison with type |
+| `clamp` changed values without a record | Each changed value is counted |
+| `hash`/`uuid5` of numbers: `1` and `1.0` gave different identities | Only text, objects or lists |
 
-## Tipos e casts
+## Types and casts
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| `true` num número dava `1` | Erro |
-| Inteiros fora do intervalo e decimais com demasiados algarismos só falhavam na escrita | Erro no cast, no documento |
-| `decimal(10,2)` arredondava em silêncio (`1.255` → `1.26`, `0.004` → `0.00`) | Erro, a não ser com `rounding` declarado (contado) |
-| `double` e `float` perdiam algarismos (`9007199254740993` → `…992`; `1.23456789` num `float` → `1.2345679`) | Erro, a não ser com `rounding: nearest` |
-| `json` guardava `"abc"`; chaves de `map`/`struct` que colidiam perdiam uma | Erro |
-| Coluna sem tipo com valores misturados ficava texto (`'1.5'`) | A carga falha com exemplos; declare o `type` |
-| `tinyint`/`smallint` iam para o Athena tal e qual (o Iceberg não os tem) | Na tabela ficam `int`; o intervalo continua validado no cast |
+| `true` in a number gave `1` | Error |
+| Integers out of range and decimals with too many digits only failed at write time | An error in the cast, in the document |
+| `decimal(10,2)` silently rounded (`1.255` → `1.26`, `0.004` → `0.00`) | Error, unless `rounding` is declared (counted) |
+| `double` and `float` lost digits (`9007199254740993` → `…992`; `1.23456789` in a `float` → `1.2345679`) | Error, unless `rounding: nearest` |
+| `json` stored `"abc"`; colliding `map`/`struct` keys lost one | Error |
+| An untyped column with mixed values became text (`'1.5'`) | The load fails with examples; declare the `type` |
+| `tinyint`/`smallint` went to Athena as they were (Iceberg does not have them) | In the table they are `int`; the range is still validated in the cast |
 
-## Datas
+## Dates
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| O leitor do Python aceitava muitos formatos e lia `2022-01-01+02:00` como as 02:00 | Só o formato do schema (`xsd:dateTime`), ou o `format` declarado |
-| Hora sem fuso era tratada como UTC sem aviso | Erro, a não ser com `input.naive_timestamps: utc` ou um fuso IANA (contado) |
-| `date`/`year`/`date_format` usavam o dia em UTC (`01:00+02:00` do dia 11 dava dia 10) | Usam o dia tal como foi escrito |
-| `year` de `2022` (número) dava 1970 | Um número só é data com a unidade declarada |
-| `24:00:00` era rejeitado | É o instante 00:00 do dia seguinte (e erro onde seria ambíguo) |
+| Python's reader accepted many formats and read `2022-01-01+02:00` as 02:00 | Only the schema's format (`xsd:dateTime`), or the declared `format` |
+| A time without a time zone was treated as UTC without a warning | Error, unless `input.naive_timestamps: utc` or an IANA time zone (counted) |
+| `date`/`year`/`date_format` used the day in UTC (`01:00+02:00` on the 11th gave the 10th) | They use the day as it was written |
+| `year` of `2022` (a number) gave 1970 | A number is only a date with the unit declared |
+| `24:00:00` was rejected | It is the instant 00:00 of the next day (and an error where it would be ambiguous) |
 
-## Números em texto
+## Numbers as text
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| `"1,5"` passava a `1.5`; `"1.234"` era lido sem aviso; dígitos não‑ASCII eram aceites | Só o formato JSON é lido (contado como aviso); o que for ambíguo é erro. Outros formatos declaram-se com `to_number: {decimal: ",", thousands: "."}` |
+| `"1,5"` became `1.5`; `"1.234"` was read without a warning; non-ASCII digits were accepted | Only the JSON format is read (counted as a warning); what is ambiguous is an error. Other formats are declared with `to_number: {decimal: ",", thousands: "."}` |
 
-## Chaves, duplicados, identidade e templates
+## Keys, duplicates, identity and templates
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Linha com chave nula era escrita | Erro (ou `on_error: skip_row`, contado) |
-| A mesma chave duas vezes no mesmo documento: ficava a última (um filho repetido num BOM perdia a quantidade) | Erro, a não ser com `on_duplicate: last/first` |
-| `document_id` de `0`, `"0"` e `0.0` dava três UUIDs; um campo do `from` em falta mudava o UUID sem aviso | Campos com tipo; campo em falta é erro (ou `on_missing: content`) |
-| Documento sem submodelo: aviso, e a carga acabava "ok" | Erro, a não ser com `input.on_unmatched: skip` (contado) |
-| `template` com partes em falta: o texto ficava com partes vazias | Se todas faltarem, nulo. Se só algumas faltarem, erro (ou `template_missing: empty/null`, contado) |
+| A row with a null key was written | Error (or `on_error: skip_row`, counted) |
+| The same key twice in the same document: the last one stayed (a child repeated in a BOM lost its quantity) | Error, unless `on_duplicate: last/first` |
+| `document_id` of `0`, `"0"` and `0.0` gave three UUIDs; a missing `from` field changed the UUID without a warning | Fields with a type; a missing field is an error (or `on_missing: content`) |
+| A document without a submodel: a warning, and the load ended "ok" | Error, unless `input.on_unmatched: skip` (counted) |
+| `template` with missing parts: the text kept empty parts | If all are missing, null. If only some are missing, an error (or `template_missing: empty/null`, counted) |
 
-## Modo auto e `auto_normalize`
+## Auto mode and `auto_normalize`
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Dois campos auto com o mesmo nome de coluna: ficava o primeiro | Erro (ou `auto_collision: prefix/skip`, contado) |
-| Nomes `leaf` calculados com os campos de cada documento: na mesma carga, `ghg.fossil` ia para `fossil` num documento e para `ghg_fossil` noutro | Calculados com o modelo (`model.schema`, todas as alternativas `oneOf`/`anyOf`), iguais em todas as cargas. Campo fora do modelo: nome completo, com aviso |
-| As tabelas filhas do `auto_normalize` vinham só das listas do lote: uma lista que ficou vazia em todos os documentos não apagava as linhas antigas; com `naming: leaf` o nome da tabela dependia do lote | Com `model.schema`, todas as listas do modelo têm tabela, e o `DELETE` corre. Sem modelo, declara-se `children: batch` (contado) |
-| `defaults.athena_options: {mode: overwrite}` num `auto_normalize` passava, e substituía a tabela raiz | Validado ao carregar, como nas tabelas explícitas |
+| Two auto fields with the same column name: the first one stayed | Error (or `auto_collision: prefix/skip`, counted) |
+| `leaf` names computed from each document's fields: in the same load, `ghg.fossil` went to `fossil` in one document and to `ghg_fossil` in another | Computed from the model (`model.schema`, every `oneOf`/`anyOf` alternative), the same in every load. A field outside the model: its full name, with a warning |
+| `auto_normalize`'s child tables came only from the batch's lists: a list that was empty in every document did not delete the old rows; with `naming: leaf` the table's name depended on the batch | With `model.schema`, every list of the model has a table, and the `DELETE` runs. Without a model, `children: batch` is declared (counted) |
+| `defaults.athena_options: {mode: overwrite}` in an `auto_normalize` passed, and replaced the root table | Validated at load time, as for explicit tables |
 
-## Escrita
+## Writing
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Tipos adivinhados pelo pandas: um `bigint` com um nulo no lote passava por `float64` (`…993` → `…992`); um timestamp depois de 2262 falhava no pandas 2 | Tipos declarados (Int64, `datetime64[us]`, decimal exacto) |
-| Uma incompatibilidade de tipo com a tabela só aparecia depois do `DELETE` do `replace_by` (linhas antigas apagadas, novas por escrever); uma tabela `bigint` podia ser estreitada para `int` | Pré-verificação de todas as tabelas antes de qualquer escrita ou `DELETE` (Arrow, awswrangler, catálogo Glue). Tipo mais largo na tabela: escreve-se com esse tipo. Alargamento que o Iceberg faz sem mudar as linhas antigas: aviso. `float` ↔ `double` e outros tipos: erro |
-| `replace_by` só apagava os documentos que ainda tinham linhas (lista vazia, ou tudo excluído pelo `where`: os filhos antigos ficavam) | Apaga todos os documentos aceites do lote; documentos rejeitados não apagam nada |
-| `DELETE` com `float` nunca correspondia (`1.1` double ≠ real) | Literais com o tipo da coluna na tabela |
-| `merge` punha `NULL` nas colunas da tabela que a configuração não produz | Erro, a não ser com `missing_columns: null`. Em tabelas `auto` é o valor certo (o campo saiu do documento), e fica contado |
-| `overwrite` sem linhas deixava o conteúdo antigo, enquanto as outras tabelas eram substituídas | A tabela fica vazia, se houve documentos do submodelo no lote |
-| `athena_options` podia sobrepor `mode`/`dtype`/...; `overwrite_partitions` aceitava `day(...)`; `partition_by` com coluna inexistente só falhava no Athena | Erro ao carregar ou na pré-verificação |
-| CSV local: nulo igual a `""`, listas em `repr` do Python, `True`. JSONL: decimal como texto. Parquet local: tipos adivinhados | CSV com nulo sem aspas e JSON para listas; JSONL exacto; Parquet com o schema declarado |
+| Types guessed by pandas: a `bigint` with a null in the batch went through `float64` (`…993` → `…992`); a timestamp after 2262 failed in pandas 2 | Declared types (Int64, `datetime64[us]`, exact decimal) |
+| A type mismatch with the table only showed up after the `replace_by` `DELETE` (old rows deleted, new ones not written); a `bigint` table could be narrowed to `int` | A pre-check of every table before any write or `DELETE` (Arrow, awswrangler, Glue catalog). A wider type in the table: written with that type. A widening Iceberg does without changing the old rows: a warning. `float` ↔ `double` and other types: an error |
+| `replace_by` only deleted the documents that still had rows (an empty list, or everything excluded by the `where`: the old children stayed) | It deletes every accepted document of the batch; rejected documents delete nothing |
+| A `DELETE` with `float` never matched (`1.1` double ≠ real) | Literals with the column's type in the table |
+| `merge` put `NULL` in the table's columns the configuration does not produce | Error, unless `missing_columns: null`. In `auto` tables it is the right value (the field left the document), and it is counted |
+| `overwrite` without rows left the old content, while the other tables were replaced | The table becomes empty, if the batch had documents of the submodel |
+| `athena_options` could override `mode`/`dtype`/...; `overwrite_partitions` accepted `day(...)`; `partition_by` with a column that does not exist only failed in Athena | An error at load time or in the pre-check |
+| Local CSV: null the same as `""`, lists as Python `repr`, `True`. JSONL: decimal as text. Local Parquet: guessed types | CSV with null unquoted and JSON for lists; exact JSONL; Parquet with the declared schema |
 
 ## Studio
 
-| Antes | Agora |
+| Before | Now |
 |---|---|
-| Só mostrava as primeiras mensagens do log; um documento rejeitado escondia a pré-visualização toda | Relatório da carga (rejeitados, perdas declaradas, avisos) com ● por coluna na grelha; as linhas dos restantes continuam visíveis; pré-verificação da escrita |
-| O browser mostrava `9007199254740993` como `…992` e um `float` 1.1 como `1.100000023841858` | Valores mostrados tal como ficam na tabela |
-| Ao gravar, o conflito com uma edição externa era detectado pelo mtime: com a mesma marca de tempo (Docker/WSL, FS com resolução de 1–2 s, `cp -p`), a edição externa era apagada | Detectado pelo conteúdo (hash) |
+| It only showed the first messages of the log; a rejected document hid the whole preview | The load report (rejected, declared losses, warnings) with a ● per column in the grid; the others' rows stay visible; the write pre-check |
+| The browser showed `9007199254740993` as `…992` and a `float` 1.1 as `1.100000023841858` | Values shown as they will be in the table |
+| On save, a conflict with an external edit was detected by the mtime: with the same timestamp (Docker/WSL, FS with 1–2 s resolution, `cp -p`), the external edit was overwritten | Detected by the content (hash) |
 
-## O que deixa de carregar, ou passa a falhar
+## What no longer loads, or now fails
 
-Todos os casos abaixo eram perdas ou mudanças de valor silenciosas. Agora ou se corrigem os dados, ou se declara o comportamento na configuração, e esse comportamento fica contado no relatório.
+Every case below was a silent loss or change of value. Now either the data is fixed, or the behaviour is declared in the configuration, and that behaviour is counted in the report.
 
-| Situação | Passa a | O que fazer |
+| Situation | Becomes | What to do |
 |---|---|---|
-| `yes`/`no`/`on`/`off` usados como booleanos; chaves repetidas no YAML; `dedupe: "false"` | erro ao carregar | usar `true`/`false`; remover a chave repetida |
-| Transformação ou argumento mal escrito; caminho inválido | erro ao carregar | corrigir |
-| Horas sem fuso; data sem hora usada como `timestamp` | documento rejeitado | `input.naive_timestamps: utc` ou o fuso IANA do emissor |
-| Números em texto com vírgula ou separador de milhares | documento rejeitado | `to_number: {decimal: ",", thousands: "."}` |
-| `decimal`/`double`/`float` com mais precisão do que o tipo | documento rejeitado | `rounding` na coluna, ou um tipo maior |
-| Condições que comparam tipos diferentes (`value: "9"` com números) | documento rejeitado | escrever o `value` com o tipo certo |
-| `[*].campo` com elementos sem o campo | documento rejeitado | `missing_elements: null` ou `skip` |
-| `sum` com nulos; `unit_convert` sem unidade; `regex_extract` sem correspondência | documento rejeitado | `sum: {nulls: skip}`, `from:`, `no_match: null` |
-| Chave nula, ou repetida no mesmo documento | documento rejeitado | `on_error: skip_row`, `on_duplicate: last` |
-| Documento sem submodelo | documento rejeitado | `input.on_unmatched: skip` |
-| `template` com só algumas partes | documento rejeitado | `template_missing: empty` ou `null` |
-| `document_id.from` com números sem tipo, ou campo em falta | erro ao carregar / documento rejeitado | `{path: version, type: int}`; `on_missing: content`. Ver a nota de migração dos UUIDs no README |
-| `auto_naming: leaf` ou `auto_normalize.naming: leaf` sem `model.schema` | erro ao carregar | declarar `model.schema`, usar `full`, ou gerar colunas explícitas com `init --naming leaf`. Tabelas já criadas com nomes leaf por documento podem ter colunas com outros nomes: as colunas novas aparecem como avisos na escrita |
-| `auto_normalize` sem `model.schema` com `mode` que não seja `append` | erro ao carregar | `model.schema` (recomendado) ou `auto_normalize.children: batch` |
-| `merge` numa tabela que tem colunas que a configuração não produz | pré-verificação falha | `missing_columns: null`, ou acrescentar as colunas |
-| Tipo da configuração incompatível com a tabela (`float` ↔ `double`, `string` ↔ número, escala de decimal) | pré-verificação falha | declarar o tipo da tabela |
-| `athena_options` com `mode`, `dtype`, …; `overwrite_partitions` com `day(...)` | erro ao carregar | usar as opções da configuração; partições por coluna |
-| Colunas que dão o mesmo nome (`fossilGhg`, `fossil_ghg`) | erro ao carregar | renomear uma |
+| `yes`/`no`/`on`/`off` used as booleans; repeated keys in the YAML; `dedupe: "false"` | error at load time | use `true`/`false`; remove the repeated key |
+| A misspelled transformation or argument; an invalid path | error at load time | fix it |
+| Times without a time zone; a date without a time used as a `timestamp` | document rejected | `input.naive_timestamps: utc` or the sender's IANA time zone |
+| Numbers as text with a comma or a thousands separator | document rejected | `to_number: {decimal: ",", thousands: "."}` |
+| `decimal`/`double`/`float` with more precision than the type | document rejected | `rounding` on the column, or a larger type |
+| Conditions that compare different types (`value: "9"` with numbers) | document rejected | write the `value` with the right type |
+| `[*].field` with elements without the field | document rejected | `missing_elements: null` or `skip` |
+| `sum` with nulls; `unit_convert` without a unit; `regex_extract` without a match | document rejected | `sum: {nulls: skip}`, `from:`, `no_match: null` |
+| A null key, or one repeated in the same document | document rejected | `on_error: skip_row`, `on_duplicate: last` |
+| A document without a submodel | document rejected | `input.on_unmatched: skip` |
+| `template` with only some parts | document rejected | `template_missing: empty` or `null` |
+| `document_id.from` with untyped numbers, or a missing field | error at load time / document rejected | `{path: version, type: int}`; `on_missing: content`. See the note on migrating UUIDs in the README |
+| `auto_naming: leaf` or `auto_normalize.naming: leaf` without `model.schema` | error at load time | declare `model.schema`, use `full`, or generate explicit columns with `init --naming leaf`. Tables already created with per-document leaf names may have columns with other names: the new columns appear as warnings at write time |
+| `auto_normalize` without `model.schema` with a `mode` other than `append` | error at load time | `model.schema` (recommended) or `auto_normalize.children: batch` |
+| `merge` on a table that has columns the configuration does not produce | the pre-check fails | `missing_columns: null`, or add the columns |
+| A configuration type incompatible with the table (`float` ↔ `double`, `string` ↔ number, a decimal's scale) | the pre-check fails | declare the table's type |
+| `athena_options` with `mode`, `dtype`, …; `overwrite_partitions` with `day(...)` | error at load time | use the configuration's options; partitions by column |
+| Columns that give the same name (`fossilGhg`, `fossil_ghg`) | error at load time | rename one |
 
-Exemplos actualizados: em `examples/config.yaml` o submodelo PCF declara `model.schema` (PCF 7.0.0) e corresponde só a `pcf:7.*`, e os outros ficheiros da pasta são ignorados com `input.on_unmatched: skip`. O exemplo [13] de `pcf_v7_to_v9.yaml` passou a comparar datas (`created gte "2025-01-01"`), e o `document_id.from` declara `{path: version, type: int}`.
+Updated examples: in `examples/config.yaml` the PCF submodel declares `model.schema` (PCF 7.0.0) and matches only `pcf:7.*`, and the folder's other files are ignored with `input.on_unmatched: skip`. Example [13] of `pcf_v7_to_v9.yaml` now compares dates (`created gte "2025-01-01"`), and `document_id.from` declares `{path: version, type: int}`.

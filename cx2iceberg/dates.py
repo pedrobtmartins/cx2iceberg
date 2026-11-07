@@ -1,20 +1,20 @@
-"""Datas e horas: leitura sem adivinhar.
+"""Dates and times: read without guessing.
 
-Texto só no formato do schema SAMM (`xsd:dateTime`: `2022-01-01T10:00:00`, fracção opcional, `Z` ou `±hh:mm`
-até ±14:00) ou data (`2022-01-01`, com fuso opcional). O `fromisoformat` do Python aceitava muito mais, e lia
-`2022-01-01+02:00` (uma data com fuso) como as 02:00 desse dia. Outros formatos: `to_timestamp: {format: ...}`.
+Text only in the SAMM schema's format (`xsd:dateTime`: `2022-01-01T10:00:00`, optional fraction, `Z` or `±hh:mm`
+up to ±14:00) or a date (`2022-01-01`, with an optional time zone). Python's `fromisoformat` accepted much more, and read
+`2022-01-01+02:00` (a date with a time zone) as 02:00 on that day. Other formats: `to_timestamp: {format: ...}`.
 
-* `timestamp` é um instante: com fuso é convertido para UTC. Sem fuso o formato é válido no schema, mas o
-  instante é desconhecido -> erro, a não ser com `input.naive_timestamps: utc` ou um fuso IANA
-  (`Europe/Berlin`); com um fuso, horas ambíguas ou inexistentes na mudança de hora são erro. Cada valor
-  assumido fica contado. Uma data sem hora usada como timestamp também precisa dessa declaração (meia-noite).
-* `24:00:00` (fim do dia, válido no schema) é o instante 00:00 do dia seguinte. Para `date/year/month/
-  date_format` é ambíguo (fim do dia D ou início de D+1: `2022-12-31T24:00:00` mudaria de ano) -> erro.
-* `date`, `year`, `month`, `date_format` usam a data/hora tal como foi escrita (no fuso do documento):
-  `2023-07-11T01:00:00+02:00` é o dia 11 (em UTC seria o dia 10). Não precisam de fuso.
-* Um número só é data com a unidade declarada: `to_timestamp: {unit: s}` ou `{unit: ms}`.
-* Fracções abaixo do microssegundo ficam cortadas e contadas (um timestamp Iceberg guarda microssegundos).
-* Anos fora de 0001–9999 (válidos no schema) não são suportados: erro.
+* `timestamp` is an instant: with a time zone it is converted to UTC. Without one the format is valid in the schema,
+  but the instant is unknown -> error, unless `input.naive_timestamps: utc` or an IANA time zone
+  (`Europe/Berlin`); with a time zone, ambiguous or non-existent times at a clock change are errors. Each assumed
+  value is counted. A date without a time used as a timestamp also needs that declaration (midnight).
+* `24:00:00` (end of the day, valid in the schema) is the instant 00:00 of the next day. For `date/year/month/
+  date_format` it is ambiguous (end of day D or start of D+1: `2022-12-31T24:00:00` would change year) -> error.
+* `date`, `year`, `month`, `date_format` use the date/time as it was written (in the document's time zone):
+  `2023-07-11T01:00:00+02:00` is the 11th (in UTC it would be the 10th). They need no time zone.
+* A number is only a date with the unit declared: `to_timestamp: {unit: s}` or `{unit: ms}`.
+* Fractions below the microsecond are truncated and counted (an Iceberg timestamp stores microseconds).
+* Years outside 0001–9999 (valid in the schema) are not supported: error.
 """
 from __future__ import annotations
 
@@ -25,12 +25,12 @@ from functools import lru_cache
 
 from .notes import note, setting
 
-NAIVE_POLICIES = ("fail", "utc")          # ou o nome de um fuso IANA (ex.: Europe/Berlin)
+NAIVE_POLICIES = ("fail", "utc")          # or the name of an IANA time zone (e.g. Europe/Berlin)
 UNITS = {"s": 1, "ms": 1000}
 DATETIME_RE = re.compile(r"(-?\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?", re.ASCII)
 DATE_RE = re.compile(r"(-?\d{4,})-(\d{2})-(\d{2})(Z|[+-]\d{2}:\d{2})?", re.ASCII)
-FORMAT_HINT = ("formato aceite (xsd:dateTime do schema): 2022-01-01T10:00:00Z, 2022-01-01T10:00:00.5+02:00 ou "
-               "2022-01-01; para outro formato declare to_timestamp: {format: ...}")
+FORMAT_HINT = ("accepted format (the schema's xsd:dateTime): 2022-01-01T10:00:00Z, 2022-01-01T10:00:00.5+02:00 or "
+               "2022-01-01; for another format declare to_timestamp: {format: ...}")
 
 
 class DateError(ValueError):
@@ -39,7 +39,7 @@ class DateError(ValueError):
 
 @lru_cache(maxsize=512)
 def zone(name: str):
-    """Fuso IANA (ou None para 'utc'/'UTC'); ValueError se não existir."""
+    """IANA time zone (or None for 'utc'/'UTC'); ValueError if it does not exist."""
     if name in ("utc", "UTC"):
         return None
     import zoneinfo  # noqa: PLC0415
@@ -47,7 +47,7 @@ def zone(name: str):
     try:
         return zoneinfo.ZoneInfo(name)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
-        raise ValueError(f"fuso horário desconhecido: {name!r} (use fail, utc ou um nome IANA como Europe/Berlin)") from None
+        raise ValueError(f"unknown time zone: {name!r} (use fail, utc or an IANA name such as Europe/Berlin)") from None
 
 
 def check_policy(policy: str) -> None:
@@ -62,7 +62,7 @@ def _offset(text: str | None, v: str) -> timezone | None:
         return timezone.utc
     hours, minutes = int(text[1:3]), int(text[4:6])
     if minutes > 59 or hours > 14 or (hours == 14 and minutes):
-        raise DateError(f"'{v}': fuso {text} fora do intervalo do schema (-14:00 a +14:00)")
+        raise DateError(f"'{v}': time zone {text} outside the schema's range (-14:00 to +14:00)")
     delta = timedelta(hours=hours, minutes=minutes)
     return timezone(-delta if text[0] == "-" else delta)
 
@@ -70,12 +70,12 @@ def _offset(text: str | None, v: str) -> timezone | None:
 def _year(text: str, v: str) -> int:
     y = int(text)
     if not 1 <= y <= 9999:
-        raise DateError(f"'{v}': o ano {y} é válido no schema mas não é suportado (0001 a 9999)")
+        raise DateError(f"'{v}': year {y} is valid in the schema but not supported (0001 to 9999)")
     return y
 
 
 def parse_text(v: str) -> tuple[datetime, str, bool]:
-    """Texto -> (datetime, 'datetime' | 'date', fim_do_dia). Só o formato do schema."""
+    """Text -> (datetime, 'datetime' | 'date', end_of_day). Only the schema's format."""
     s = v.strip()
     m = DATETIME_RE.fullmatch(s)
     if m:
@@ -84,7 +84,7 @@ def parse_text(v: str) -> tuple[datetime, str, bool]:
         try:
             if end_of_day:
                 if mi != "00" or ss != "00" or (frac and frac.strip("0")):
-                    raise DateError(f"'{v}': com 24 as horas têm de ser 24:00:00 (fim do dia)")
+                    raise DateError(f"'{v}': with hour 24 the time must be 24:00:00 (end of the day)")
                 dt = datetime(_year(y, v), int(mo), int(d)) + timedelta(days=1)
             else:
                 us = int((frac or "")[:6].ljust(6, "0"))
@@ -92,10 +92,10 @@ def parse_text(v: str) -> tuple[datetime, str, bool]:
         except DateError:
             raise
         except (ValueError, OverflowError) as e:
-            raise DateError(f"'{v}' não é uma data/hora válida ({e})") from None
+            raise DateError(f"'{v}' is not a valid date/time ({e})") from None
         if frac and len(frac) > 6 and frac[6:].strip("0"):
             note("warning", "timestamp_precision", "truncated",
-                 f"'{v}': fracção abaixo do microssegundo cortada (um timestamp guarda microssegundos)")
+                 f"'{v}': fraction below the microsecond truncated (a timestamp stores microseconds)")
         tzinfo = _offset(tz, v)
         return (dt.replace(tzinfo=tzinfo) if tzinfo else dt), "datetime", end_of_day
     m = DATE_RE.fullmatch(s)
@@ -106,81 +106,81 @@ def parse_text(v: str) -> tuple[datetime, str, bool]:
         except DateError:
             raise
         except ValueError as e:
-            raise DateError(f"'{v}' não é uma data válida ({e})") from None
+            raise DateError(f"'{v}' is not a valid date ({e})") from None
         tzinfo = _offset(tz, v)
         return (dt.replace(tzinfo=tzinfo) if tzinfo else dt), "date", False
-    raise DateError(f"'{v}' não é uma data/hora no formato do schema; {FORMAT_HINT}")
+    raise DateError(f"'{v}' is not a date/time in the schema's format; {FORMAT_HINT}")
 
 
 def _parse(v, fmt: str | None = None, unit: str | None = None) -> tuple[datetime, str, bool]:
-    """-> (datetime com ou sem fuso, origem: 'object' | 'date' | 'datetime' | 'number', fim_do_dia)."""
+    """-> (datetime with or without a time zone, source: 'object' | 'date' | 'datetime' | 'number', end_of_day)."""
     if isinstance(v, bool):
-        raise DateError(f"o booleano {str(v).lower()} não é uma data")
+        raise DateError(f"the boolean {str(v).lower()} is not a date")
     if isinstance(v, datetime):
         return v, "object", False
     if isinstance(v, date):
         return datetime(v.year, v.month, v.day), "date", False
     if isinstance(v, (int, float, Decimal)):
         if unit is None:
-            raise DateError(f"o número {v!r} não é uma data: declare a unidade com to_timestamp: {{unit: s}} ou {{unit: ms}}")
+            raise DateError(f"the number {v!r} is not a date: declare the unit with to_timestamp: {{unit: s}} or {{unit: ms}}")
         try:
             return datetime.fromtimestamp(float(v) / UNITS[unit], tz=timezone.utc), "number", False
         except (OverflowError, OSError, ValueError) as e:
-            raise DateError(f"{v!r} ({unit}) está fora do intervalo de datas: {e}") from None
+            raise DateError(f"{v!r} ({unit}) is outside the range of dates: {e}") from None
     if not isinstance(v, str):
-        raise DateError(f"{v!r} não é uma data")
+        raise DateError(f"{v!r} is not a date")
     if fmt:
         try:
             return datetime.strptime(v.strip(), fmt), "datetime", False
         except ValueError:
-            raise DateError(f"'{v}' não é uma data/hora no formato {fmt!r}") from None
+            raise DateError(f"'{v}' is not a date/time in the format {fmt!r}") from None
     return parse_text(v)
 
 
 def _assume_zone(v, dt: datetime, what: str) -> datetime:
-    """Data/hora sem fuso -> instante, segundo input.naive_timestamps (fail | utc | fuso IANA)."""
+    """Date/time without a time zone -> instant, according to input.naive_timestamps (fail | utc | IANA time zone)."""
     policy = setting("naive_timestamps", "fail")
     if policy == "fail":
-        raise DateError(f"'{v}': {what} não tem fuso horário (é válido no schema, mas o instante é desconhecido); "
-                        f"declare input.naive_timestamps: utc ou o fuso do emissor (ex.: Europe/Berlin)")
+        raise DateError(f"'{v}': {what} has no time zone (it is valid in the schema, but the instant is unknown); "
+                        f"declare input.naive_timestamps: utc or the sender's time zone (e.g. Europe/Berlin)")
     tz = zone(policy)
     if tz is None:
-        note("declared", "naive_timestamp", "assumed_utc", f"'{v}': {what} sem fuso, lida como UTC")
+        note("declared", "naive_timestamp", "assumed_utc", f"'{v}': {what} without a time zone, read as UTC")
         return dt
     first, second = dt.replace(tzinfo=tz, fold=0), dt.replace(tzinfo=tz, fold=1)
     if first.astimezone(timezone.utc).astimezone(tz).replace(tzinfo=None) != dt:
-        raise DateError(f"'{v}': esta hora não existe em {policy} (mudança de hora)")
+        raise DateError(f"'{v}': this time does not exist in {policy} (clock change)")
     if first.utcoffset() != second.utcoffset():
-        raise DateError(f"'{v}': esta hora é ambígua em {policy} (acontece duas vezes na mudança de hora)")
-    note("declared", "naive_timestamp", "assumed_zone", f"'{v}': {what} sem fuso, lida no fuso {policy}")
+        raise DateError(f"'{v}': this time is ambiguous in {policy} (it happens twice at the clock change)")
+    note("declared", "naive_timestamp", "assumed_zone", f"'{v}': {what} without a time zone, read in time zone {policy}")
     return first.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def to_timestamp(v, fmt: str | None = None, unit: str | None = None) -> datetime:
-    """Instante em UTC (datetime sem tzinfo, como o Iceberg o guarda)."""
+    """Instant in UTC (datetime without tzinfo, as Iceberg stores it)."""
     dt, origin, _ = _parse(v, fmt, unit)
     if origin == "date":
-        # uma data não tem hora: como instante fica a meia-noite, o que também tem de ser declarado
+        # a date has no time: as an instant it becomes midnight, which must also be declared
         if dt.tzinfo is None:
-            return _assume_zone(v, dt, "a data (sem hora, fica a meia-noite)")
+            return _assume_zone(v, dt, "the date (no time, becomes midnight)")
         if setting("naive_timestamps", "fail") == "fail":
-            raise DateError(f"'{v}': é uma data sem hora; como instante ficaria a meia-noite (no fuso {dt.tzinfo}); "
-                            f"declare input.naive_timestamps (utc ou um fuso) para o aceitar")
-        note("declared", "naive_timestamp", "assumed_midnight", f"'{v}': data sem hora, lida como meia-noite")
+            raise DateError(f"'{v}': it is a date without a time; as an instant it would be midnight (in time zone {dt.tzinfo}); "
+                            f"declare input.naive_timestamps (utc or a time zone) to accept it")
+        note("declared", "naive_timestamp", "assumed_midnight", f"'{v}': date without a time, read as midnight")
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     if origin == "object":
-        return dt                                     # já convertido por uma transformação anterior (UTC)
-    return _assume_zone(v, dt, "a data/hora")
+        return dt                                     # already converted by an earlier transformation (UTC)
+    return _assume_zone(v, dt, "the date/time")
 
 
 def wall(v, fmt: str | None = None, unit: str | None = None) -> datetime:
-    """Data/hora tal como foi escrita (no fuso do documento), sem tzinfo."""
+    """Date/time as it was written (in the document's time zone), without tzinfo."""
     dt, _, end_of_day = _parse(v, fmt, unit)
     if end_of_day:
-        raise DateError(f"'{v}': 24:00:00 é o fim desse dia e o início do seguinte, por isso a data é ambígua; "
-                        f"para o instante use to_timestamp (fica 00:00 do dia seguinte)")
+        raise DateError(f"'{v}': 24:00:00 is the end of that day and the start of the next, so the date is ambiguous; "
+                        f"for the instant use to_timestamp (it becomes 00:00 of the next day)")
     return dt.replace(tzinfo=None)
 
 

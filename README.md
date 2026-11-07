@@ -1,183 +1,183 @@
 # cx2iceberg
 
-Transforma submodelos **Catena-X** (JSON value-only: SerialPart, SingleLevelBomAsBuilt, PCF, Batch, …) em **tabelas Apache Iceberg no Amazon Athena**, através de regras declaradas num YAML.
+Turns **Catena-X** submodels (value-only JSON: SerialPart, SingleLevelBomAsBuilt, PCF, Batch, …) into **Apache Iceberg tables in Amazon Athena**, through rules declared in a YAML file.
 
 ```
-JSON do submodelo ──► match (semantic id / ficheiro / campos) ──► regras por tabela ──► Athena (Iceberg)
-                                                                   explode, filtros,
-                                                                   transformações, tipos
+submodel JSON ──► match (semantic id / file / fields) ──► rules per table ──► Athena (Iceberg)
+                                                           explode, filters,
+                                                           transformations, types
 ```
 
-## Arranque rápido
+## Quick start
 
 ```bash
 pip install -e ".[aws,parquet]"
 ```
 
-1. Gerar uma configuração. O melhor é partir do **JSON Schema do modelo SAMM** (pasta `gen/` de cada modelo em [eclipse-tractusx/sldt-semantic-models](https://github.com/eclipse-tractusx/sldt-semantic-models)), porque inclui todos os campos e tipos, mesmo os que não aparecem num exemplo. Pode juntar-lhe JSONs de exemplo:
+1. Generate a configuration. It is best to start from the **SAMM model's JSON Schema** (the `gen/` folder of each model in [eclipse-tractusx/sldt-semantic-models](https://github.com/eclipse-tractusx/sldt-semantic-models)), because it includes every field and type, even those that do not appear in an example. You can add example JSONs to it:
 
 ```bash
 cx2iceberg init --schema Pcf-schema.json Pcf.json --name pcf9 --unwrap all --keep-list attestationOfConformance --naming leaf -o config.yaml
 ```
 
-Opções do `init`: `--unwrap all|a.b,c.d`, `--keep-list` (com `--unwrap all`, listas que têm mesmo vários elementos), `--naming full|leaf`, `--style flat|struct`, `--scalar-lists array|rows`, `--id-path`.
+`init` options: `--unwrap all|a.b,c.d`, `--keep-list` (with `--unwrap all`, lists that really have several elements), `--naming full|leaf`, `--style flat|struct`, `--scalar-lists array|rows`, `--id-path`.
 
-2. Rever o `config.yaml` (nomes, tipos, chaves) e testar sem tocar na AWS:
-
-```bash
-cx2iceberg run -c config.yaml exemplo.json --dry-run
-```
-
-3. Escrever no Athena:
+2. Review `config.yaml` (names, types, keys) and test without touching AWS:
 
 ```bash
-cx2iceberg run -c config.yaml s3://bucket/entrada/serial_part/
+cx2iceberg run -c config.yaml example.json --dry-run
 ```
 
-Cada `run` (e `ddl`) mostra o **relatório da carga** em stderr: ver [Relatório da carga](#relatório-da-carga-e-códigos-de-saída).
+3. Write to Athena:
 
-Outros comandos: `cx2iceberg validate -c config.yaml`, `cx2iceberg ddl -c config.yaml dados/` (mostra o `CREATE TABLE` Iceberg), `cx2iceberg transforms` (lista as transformações), `run --out pasta --format csv|parquet|jsonl` (escreve localmente).
+```bash
+cx2iceberg run -c config.yaml s3://bucket/input/serial_part/
+```
 
-O ficheiro [examples/config.yaml](examples/config.yaml) cobre praticamente todas as funcionalidades com SerialPart, BOM e PCF.
+Each `run` (and `ddl`) prints the **load report** on stderr: see [Load report](#load-report-and-exit-codes).
 
-Nenhum valor é alterado ou perdido sem aviso: uma perda não declarada é um erro, e uma perda declarada na configuração é permitida e fica contada no [relatório da carga](#relatório-da-carga-e-códigos-de-saída). As mudanças de comportamento, e o que fazer com configurações existentes, estão em [CHANGELOG.md](CHANGELOG.md).
+Other commands: `cx2iceberg validate -c config.yaml`, `cx2iceberg ddl -c config.yaml data/` (shows the Iceberg `CREATE TABLE`), `cx2iceberg transforms` (lists the transformations), `run --out folder --format csv|parquet|jsonl` (writes locally).
 
-## Estrutura da configuração
+The file [examples/config.yaml](examples/config.yaml) covers almost every feature with SerialPart, BOM and PCF.
+
+No value is changed or lost without a warning: an undeclared loss is an error, and a loss declared in the configuration is allowed and counted in the [load report](#load-report-and-exit-codes). The behaviour changes, and what to do with existing configurations, are in [CHANGELOG.md](CHANGELOG.md).
+
+## Configuration structure
 
 ```yaml
-target:                     # destino Athena
+target:                     # Athena destination
   database: catenax
-  location: s3://bucket/warehouse      # cada tabela em <location>/<tabela>/
+  location: s3://bucket/warehouse      # each table in <location>/<table>/
   temp_path: s3://bucket/tmp
   workgroup: primary
   region: eu-west-1
   # profile, create_database (true), schema_evolution (true)
 
-input:                      # opcional: de onde vem o semantic id
-  semantic_id: urn:...                 # fixo, ou
-  semantic_id_map: {"*serial*": urn:...}   # por nome de ficheiro, ou
+input:                      # optional: where the semantic id comes from
+  semantic_id: urn:...                 # fixed, or
+  semantic_id_map: {"*serial*": urn:...}   # by file name, or
   envelope: {payload_path: payload, semantic_id_path: semanticId}
-  match_all: false                     # um documento pode alimentar vários submodelos
-  on_unmatched: fail                   # documento sem submodelo: fail (rejeitado) | skip (ignorado e contado)
-  naive_timestamps: fail               # data/hora sem fuso: fail | utc | fuso IANA (ex.: Europe/Berlin)
+  match_all: false                     # a document can feed several submodels
+  on_unmatched: fail                   # document without a submodel: fail (rejected) | skip (ignored and counted)
+  naive_timestamps: fail               # date/time without a time zone: fail | utc | IANA time zone (e.g. Europe/Berlin)
 
-defaults:                   # aplicado a todas as tabelas (sobreponível)
+defaults:                   # applied to every table (can be overridden)
   metadata_columns: true
   on_error: fail
 
-plugins: [meu_modulo]       # opcional: transformações próprias
+plugins: [my_module]        # optional: your own transformations
 
 submodels:
   - name: serial_part
     match: {semantic_id: "urn:samm:io.catenax.serial_part:3.*"}
-    defaults: {mode: merge}            # defaults só deste submodelo
-    common_columns:                    # colunas repetidas em todas as tabelas do submodelo
+    defaults: {mode: merge}            # defaults for this submodel only
+    common_columns:                    # columns repeated in every table of the submodel
       catenax_id: $root.catenaXId | urn_suffix
     tables: [...]
-    auto_normalize: {...}              # opcional: gera tabelas sozinho
+    auto_normalize: {...}              # optional: generates tables on its own
 ```
 
-Valores `${VAR}` ou `${VAR:-omissão}` são lidos de variáveis de ambiente — a mesma configuração serve dev/qa/prod.
+`${VAR}` or `${VAR:-default}` values are read from environment variables — the same configuration serves dev/qa/prod.
 
-O YAML é lido como **YAML 1.2**: só `true`/`false` são booleanos (`yes`, `no`, `on`, `off` são texto — no YAML 1.1, `map: {yes: Y, no: N, on: L, off: D}` ficava só com duas traduções), `010` é 10, `0o17` e `0x1A` são octal e hexadecimal, e uma chave repetida (por exemplo a mesma coluna duas vezes) é erro. As opções booleanas (`dedupe`, `keep_empty`, `required`, …) só aceitam `true`/`false`: antes `dedupe: "false"` era verdadeiro. As chaves de `input:` são validadas (`naive_timestamps: fail | utc`, …).
+The YAML is read as **YAML 1.2**: only `true`/`false` are booleans (`yes`, `no`, `on`, `off` are text — in YAML 1.1, `map: {yes: Y, no: N, on: L, off: D}` kept only two translations), `010` is 10, `0o17` and `0x1A` are octal and hexadecimal, and a repeated key (for example the same column twice) is an error. Boolean options (`dedupe`, `keep_empty`, `required`, …) only accept `true`/`false`: before, `dedupe: "false"` was true. The keys of `input:` are validated (`naive_timestamps: fail | utc`, …).
 
-### Leitura dos ficheiros
+### Reading the files
 
-Um ficheiro que não se consegue ler **não pára a carga**: fica como documento rejeitado, com a razão, e os restantes seguem (em JSON Lines a unidade é a linha). O JSON é lido em modo estrito, para nenhum valor ser trocado sem aviso:
+A file that cannot be read **does not stop the load**: it becomes a rejected document, with the reason, and the others go on (in JSON Lines the unit is the line). The JSON is read in strict mode, so that no value is swapped without a warning:
 
-| Entrada | Resultado |
+| Input | Result |
 |---|---|
-| não é UTF-8 (Latin-1, Windows-1252, UTF-16…) | rejeitado, com o byte e a posição; a codificação **não é adivinhada** (adivinhar trocaria texto). BOM UTF-8 é aceite |
-| `NaN`, `Infinity`, `-Infinity` | rejeitado (não é JSON) |
-| chave repetida no mesmo objecto (`{"co2": 2.0, "co2": 20.0}`) | rejeitado: não se escolhe um dos valores |
-| número fora do alcance do double (`1e400`, `1e-400`) ou inteiro com mais de 4300 dígitos | rejeitado |
-| mais de 64 níveis de aninhamento | rejeitado |
-| texto com um surrogate isolado (`"\ud800"`) | rejeitado (não pode ser gravado em UTF-8; falharia só na escrita) |
-| topo que não é um objecto (`null`, `42`), elemento de lista que não é objecto, envelope sem `payload` | rejeitado |
-| vários objectos num `.json` | rejeitado, com a sugestão de usar `.jsonl` |
-| ficheiro sem documentos (`[]`, JSON Lines vazio) | aviso no relatório |
+| not UTF-8 (Latin-1, Windows-1252, UTF-16…) | rejected, with the byte and the position; the encoding **is not guessed** (guessing would swap text). A UTF-8 BOM is accepted |
+| `NaN`, `Infinity`, `-Infinity` | rejected (not JSON) |
+| a repeated key in the same object (`{"co2": 2.0, "co2": 20.0}`) | rejected: neither value is picked |
+| a number out of range for a double (`1e400`, `1e-400`) or an integer with more than 4300 digits | rejected |
+| more than 64 levels of nesting | rejected |
+| text with a lone surrogate (`"\ud800"`) | rejected (it cannot be written as UTF-8; it would only fail at write time) |
+| a top level that is not an object (`null`, `42`), a list element that is not an object, an envelope without `payload` | rejected |
+| several objects in a `.json` | rejected, with the suggestion to use `.jsonl` |
+| a file without documents (`[]`, empty JSON Lines) | a warning in the report |
 
-Números com mais de 15 algarismos significativos guardam também o texto original: um `decimal(38,20)` ou `bigint` recebe o valor exacto (ex.: `1234567890123456789.0` para `bigint` dá `1234567890123456789`, e não `…768`).
+Numbers with more than 15 significant digits also keep the original text: a `decimal(38,20)` or `bigint` gets the exact value (e.g. `1234567890123456789.0` as `bigint` gives `1234567890123456789`, not `…768`).
 
-### match — que regras se aplicam a cada JSON
+### match — which rules apply to each JSON
 
-| Chave | Exemplo | Significado |
+| Key | Example | Meaning |
 |---|---|---|
-| `semantic_id` | `"urn:samm:io.catenax.serial_part:3.*"` | glob (ou lista) sobre o semantic id |
-| `file` | `"*bom*.json"` | glob sobre o nome do ficheiro |
-| `has_paths` | `[childItems]` | os caminhos têm de existir |
-| `where` | `{path: specVersion, op: regex, value: "7\\."}` | condição arbitrária |
+| `semantic_id` | `"urn:samm:io.catenax.serial_part:3.*"` | glob (or list) on the semantic id |
+| `file` | `"*bom*.json"` | glob on the file name |
+| `has_paths` | `[childItems]` | the paths must exist |
+| `where` | `{path: specVersion, op: regex, value: "7\\."}` | any condition |
 
-Sem `match`, o submodelo aceita tudo. O primeiro que corresponde ganha (a não ser com `match_all`).
+Without `match`, the submodel accepts everything. The first one that matches wins (unless `match_all`).
 
-### Tabelas
+### Tables
 
 ```yaml
 - name: bom_as_built_edges
-  explode: childItems            # 1 linha por elemento ("a[*].b[*]" para níveis aninhados)
-  keep_empty: false              # true = linha com nulos quando a lista está vazia
+  explode: childItems            # 1 row per element ("a[*].b[*]" for nested levels)
+  keep_empty: false              # true = a row with nulls when the list is empty
   where: {path: hasAlternatives, op: eq, value: true}
   mode: merge                    # append | overwrite | overwrite_partitions | merge
-  keys: [parent_id, child_id]    # chaves do MERGE e da deduplicação
-  replace_by: [parent_id]        # DELETE das linhas existentes desses ids antes de inserir (com explode: $root/$meta)
+  keys: [parent_id, child_id]    # keys of the MERGE and of deduplication
+  replace_by: [parent_id]        # DELETE of the existing rows of those ids before inserting (with explode: $root/$meta)
   partition_by: [country, "day(created_on)", "bucket(16, child_id)"]
-  dedupe: true                   # a mesma chave noutro documento do lote: fica o último (como no merge), com aviso
-  on_duplicate: last             # a mesma chave duas vezes no MESMO documento: erro (omissão) | last | first
-  on_error: fail                 # fail (rejeita o documento) | null | skip_row — ver "Relatório da carga"
-  metadata_columns: [source_file, ingested_at]   # ou true
-  auto: false                    # true = acrescenta todos os campos escalares automaticamente
+  dedupe: true                   # the same key in another document of the batch: the last one is kept (as in merge), with a warning
+  on_duplicate: last             # the same key twice in the SAME document: error (default) | last | first
+  on_error: fail                 # fail (rejects the document) | null | skip_row — see "Load report"
+  metadata_columns: [source_file, ingested_at]   # or true
+  auto: false                    # true = adds every scalar field automatically
   columns: {...}
-  missing_columns: null          # merge: a tabela tem colunas que a config não produz -> NULL nelas (omissão: erro)
-  athena_options: {}             # outras opções de awswrangler.athena.to_iceberg (não as que a config decide)
+  missing_columns: null          # merge: the table has columns the config does not produce -> NULL in them (default: error)
+  athena_options: {}             # other awswrangler.athena.to_iceberg options (not those the config decides)
 ```
 
-**Modos de escrita**
+**Write modes**
 
-| mode | Comportamento |
+| mode | Behaviour |
 |---|---|
-| `append` | insere |
-| `merge` | `MERGE INTO` pelas `keys` (actualiza ou insere) — ideal para o gémeo digital |
-| `overwrite` | substitui a tabela inteira; se os documentos do submodelo no lote não derem nenhuma linha, a tabela fica vazia (antes ficava o conteúdo antigo) |
-| `overwrite_partitions` | substitui só as partições presentes no lote |
-| `append` + `replace_by` | apaga as linhas dos ids presentes e volta a inserir — ideal para **tabelas filhas** (listas que podem encolher) |
+| `append` | inserts |
+| `merge` | `MERGE INTO` by the `keys` (updates or inserts) — ideal for the digital twin |
+| `overwrite` | replaces the whole table; if the submodel's documents in the batch produce no row, the table becomes empty (before, the old content stayed) |
+| `overwrite_partitions` | replaces only the partitions present in the batch |
+| `append` + `replace_by` | deletes the rows of the ids present and inserts again — ideal for **child tables** (lists that can shrink) |
 
-`where` aceita `op`: `eq, ne, in, not_in, exists, missing, empty, not_empty, regex, gt, gte, lt, lte, contains`, e combinações `{all: [...]}`, `{any: [...]}`, `{not: {...}}`.
+`where` accepts `op`: `eq, ne, in, not_in, exists, missing, empty, not_empty, regex, gt, gte, lt, lte, contains`, and the combinations `{all: [...]}`, `{any: [...]}`, `{not: {...}}`.
 
-As condições (`where`, `cases.when`, `check.required_if`, `match.where`) são validadas ao carregar (operador, tipo do `value`, regex) e comparam **com tipo**: números como números (`1` e `1.0` iguais), datas no formato do schema como instantes (`10:00+02:00` é antes de `09:30Z`), e, se um dos lados for uma data sem hora, a data tal como foi escrita (`created >= "2025-01-01"`). Comparar tipos diferentes é um erro, com o `on_error` de quem avalia: `{op: gt, value: "9"}` com o número 10, `{op: eq, value: 7}` com o texto `"7"`, `gte 0` com `true` ou `"n/a"`, `regex` sobre um número. Antes comparava-se texto com texto, e `10 > "9"` era falso. No `match`, um tipo diferente conta como "não corresponde".
+Conditions (`where`, `cases.when`, `check.required_if`, `match.where`) are validated at load time (operator, type of the `value`, regex) and compare **with their type**: numbers as numbers (`1` and `1.0` are equal), dates in the schema's format as instants (`10:00+02:00` is before `09:30Z`), and, if one side is a date without a time, the date as it was written (`created >= "2025-01-01"`). Comparing different types is an error, with the evaluator's `on_error`: `{op: gt, value: "9"}` with the number 10, `{op: eq, value: 7}` with the text `"7"`, `gte 0` with `true` or `"n/a"`, `regex` on a number. Before, text was compared with text, and `10 > "9"` was false. In `match`, a different type counts as "no match".
 
-Duas regras de chaves: uma linha com uma coluna de `keys` ou `replace_by` nula é um erro (não pode ser identificada; `on_error: skip_row` na coluna ignora a linha e conta); a mesma chave duas vezes no mesmo documento é um erro, a não ser com `on_duplicate` (antes ficava a última em silêncio — o mesmo filho duas vezes num BOM perdia uma quantidade). As chaves comparam com tipo (`1` e `1.0` são a mesma chave). `mode: merge` com `dedupe: false` não é aceite (o MERGE precisa de chaves únicas).
+Two key rules: a row with a null `keys` or `replace_by` column is an error (it cannot be identified; `on_error: skip_row` on the column skips the row and counts it); the same key twice in the same document is an error, unless `on_duplicate` (before, the last one silently stayed — the same child twice in a BOM lost a quantity). Keys compare with their type (`1` and `1.0` are the same key). `mode: merge` with `dedupe: false` is not accepted (MERGE needs unique keys).
 
-No modo `auto`, dois campos que dão o mesmo nome de coluna (`fossilGhgEmissions` e `fossil_ghg_emissions`) são um erro; uma coluna explícita com o nome de um campo auto substitui-o se ler o mesmo campo, e de outra origem é erro, a não ser com `auto_collision: prefix` (`item_<nome>`) ou `skip` (contado).
+In `auto` mode, two fields that give the same column name (`fossilGhgEmissions` and `fossil_ghg_emissions`) are an error; an explicit column with an auto field's name overrides it if it reads the same field, and from another source it is an error, unless `auto_collision: prefix` (`item_<name>`) or `skip` (counted).
 
-**Escrita**
+**Writing**
 
-Os tipos escritos são os declarados, nunca adivinhados dos dados (antes, um `bigint` com um nulo no lote passava pelo pandas como `float64` e `9007199254740993` ficava `...992`; um `tinyint` num Parquet local ficava `double`).
+The types written are the declared ones, never guessed from the data (before, a `bigint` with a null in the batch went through pandas as `float64` and `9007199254740993` became `...992`; a `tinyint` in a local Parquet file became `double`).
 
-Antes de escrever qualquer tabela, e antes de qualquer `DELETE` do `replace_by`, **todas** as tabelas do lote são pré-verificadas; um problema pára a carga sem escrever nada (`--dry-run` faz a parte que não precisa da AWS):
+Before writing any table, and before any `replace_by` `DELETE`, **every** table of the batch is pre-checked; a problem stops the load without writing anything (`--dry-run` does the part that does not need AWS):
 
-* conversão para o schema Arrow declarado e o mesmo caminho de conversão que o awswrangler usa (se a versão do awswrangler tiver outra API, essa parte é saltada com aviso);
-* `partition_by` com colunas que existem; nomes até 255 caracteres; `replace_by` só em colunas simples;
-* comparação com a tabela no catálogo Glue, coluna a coluna:
+* conversion to the declared Arrow schema and the same conversion path awswrangler uses (if the awswrangler version has another API, that part is skipped with a warning);
+* `partition_by` with columns that exist; names up to 255 characters; `replace_by` only on simple columns;
+* comparison with the table in the Glue catalog, column by column:
 
-| Tabela vs configuração | O que acontece |
+| Table vs configuration | What happens |
 |---|---|
-| mesmo tipo | escreve |
-| o tipo da tabela contém todos os valores do declarado (`int` → tabela `bigint`, `decimal(10,2)` → `decimal(12,3)`) | escreve com o tipo da tabela, sem `ALTER` |
-| o declarado é um alargamento que o Iceberg faz sem mudar as linhas antigas (`int`→`bigint`, `decimal(p,s)`→`decimal(p2,s)`) | a tabela é alargada, com **aviso** (erro com `target.schema_evolution: false`) |
-| coluna nova | acrescentada, com **aviso** (erro com `schema_evolution: false`) |
-| outro tipo (`double` na tabela, `string` na config; mudar a escala de um decimal) | **erro**: o `ALTER` falharia já depois do `DELETE` |
-| `float` de um lado e `double` do outro | **erro**: o `1.1` aceite como `float` (32 bits) é `1.100000023841858` e leria-se assim numa coluna `double` (nas linhas novas, ou nas antigas se a tabela fosse alargada). Declare o tipo da tabela |
-| `merge` e a tabela tem colunas que a configuração não produz | **erro**: o `MERGE` poria `NULL` nelas nas linhas actualizadas; `missing_columns: null` declara-o (contado). Numa tabela `auto` (e no `auto_normalize`) a coluna em falta é um campo que os documentos do lote já não têm: `NULL` é o valor certo da nova versão, e fica contado. Em `append` as linhas novas ficam com `NULL` nessas colunas, sem mexer nas antigas |
+| same type | writes |
+| the table's type holds every value of the declared one (`int` → table `bigint`, `decimal(10,2)` → `decimal(12,3)`) | writes with the table's type, no `ALTER` |
+| the declared one is a widening Iceberg does without changing the old rows (`int`→`bigint`, `decimal(p,s)`→`decimal(p2,s)`) | the table is widened, with a **warning** (an error with `target.schema_evolution: false`) |
+| new column | added, with a **warning** (an error with `schema_evolution: false`) |
+| another type (`double` in the table, `string` in the config; changing a decimal's scale) | **error**: the `ALTER` would fail after the `DELETE` |
+| `float` on one side and `double` on the other | **error**: `1.1` accepted as a `float` (32 bits) is `1.100000023841858` and would read like that in a `double` column (in the new rows, or in the old ones if the table were widened). Declare the table's type |
+| `merge` and the table has columns the configuration does not produce | **error**: the `MERGE` would put `NULL` in them in the updated rows; `missing_columns: null` declares it (counted). In an `auto` table (and in `auto_normalize`) the missing column is a field the batch's documents no longer have: `NULL` is the right value of the new version, and it is counted. In `append` the new rows get `NULL` in those columns, without touching the old ones |
 
-`replace_by`: o `DELETE` abrange **todos** os documentos aceites do lote, também os que já não produzem linhas (a lista ficou vazia, ou o `where` excluiu todas): antes, as linhas antigas desses ficavam na tabela. Por isso, numa tabela com `explode`, as colunas do `replace_by` têm de ser de nível do documento (`$root.…`, `$meta.…` ou a coluna do `document_id`); um documento sem esse valor é rejeitado. Documentos rejeitados não apagam nada. Os valores são comparados com o tipo da coluna na tabela (`CAST('1.1' AS REAL)` para `float`: sem isso o `DELETE` não encontrava nada).
+`replace_by`: the `DELETE` covers **every** accepted document of the batch, including those that no longer produce rows (the list became empty, or the `where` excluded them all): before, their old rows stayed in the table. So, in a table with `explode`, the `replace_by` columns must be at document level (`$root.…`, `$meta.…` or the `document_id` column); a document without that value is rejected. Rejected documents delete nothing. The values are compared with the column's type in the table (`CAST('1.1' AS REAL)` for `float`: without it the `DELETE` found nothing).
 
-`athena_options` não aceita o que a configuração decide (`mode`, `dtype`, `merge_cols`, `partition_cols`, `schema_evolution`, …): antes passava por cima. `overwrite_partitions` só com partições por coluna (não `day(…)`, `bucket(…)`). As mesmas regras valem para os `defaults` de um submodelo com `auto_normalize` (antes `athena_options: {mode: overwrite}` passava e substituía a tabela raiz do `merge`), que também passam `missing_columns` às tabelas geradas. Duas colunas que dão o mesmo nome (`fossilGhg` e `fossil_ghg`) são um erro na carga da configuração (antes ficava só uma).
+`athena_options` does not accept what the configuration decides (`mode`, `dtype`, `merge_cols`, `partition_cols`, `schema_evolution`, …): before, it overrode it. `overwrite_partitions` only with partitions by column (not `day(…)`, `bucket(…)`). The same rules apply to the `defaults` of a submodel with `auto_normalize` (before, `athena_options: {mode: overwrite}` passed and replaced the `merge`'s root table), which also pass `missing_columns` to the generated tables. Two columns that give the same name (`fossilGhg` and `fossil_ghg`) are an error when the configuration is loaded (before, only one stayed).
 
-Ficheiros locais (`run --out`): **jsonl** com os números como foram lidos (decimal como número, não texto) e datas ISO 8601; **csv** com o nulo como campo vazio sem aspas e tudo o resto entre aspas (`""` é texto vazio), listas/objectos em JSON e booleanos `true`/`false`; **parquet** com o schema declarado.
+Local files (`run --out`): **jsonl** with the numbers as they were read (decimal as a number, not text) and ISO 8601 dates; **csv** with null as an empty field without quotes and everything else in quotes (`""` is empty text), lists/objects as JSON and booleans as `true`/`false`; **parquet** with the declared schema.
 
-### Colunas
+### Columns
 
-Forma compacta — `caminho | transformação | transformação(arg) ::tipo` (em YAML sem aspas, `::` colado ao tipo):
+Compact form — `path | transformation | transformation(arg) ::type` (in unquoted YAML, `::` attached to the type):
 
 ```yaml
 columns:
@@ -187,27 +187,27 @@ columns:
   bpn: businessPartner | upper | prefix(BPN-)
 ```
 
-Forma completa:
+Full form:
 
 ```yaml
 columns:
   quantity_kg:
-    path: quantity                        # ou paths: [a, b] (primeiro não-nulo)
-                                          # ou template: "{$root.catenaXId}|{catenaXId}"
-                                          # ou const: 42
-    transform: {unit_convert: {to: kilogram}}   # uma ou lista
+    path: quantity                        # or paths: [a, b] (first non-null)
+                                          # or template: "{$root.catenaXId}|{catenaXId}"
+                                          # or const: 42
+    transform: {unit_convert: {to: kilogram}}   # one or a list
     type: double
     default: 0
     required: true
     on_error: "null"
 ```
 
-### Valores condicionais (`cases`)
+### Conditional values (`cases`)
 
-O primeiro caso cuja condição `when` passa dá o valor; `else` é o valor por omissão. Cada caso pode ter a sua origem (`path`, `paths`, `template`, `const`) e a sua `transform`. As condições usam os mesmos operadores do `where`.
+The first case whose `when` condition passes gives the value; `else` is the default value. Each case can have its own source (`path`, `paths`, `template`, `const`) and its own `transform`. The conditions use the same operators as `where`.
 
 ```yaml
-land_management_biogenic_co2_emissions:      # "0 se o valor v7 for negativo"
+land_management_biogenic_co2_emissions:      # "0 if the v7 value is negative"
   cases:
     - when: {path: pcf.extTFS_luGhgEmissions, op: gte, value: 0}
       path: pcf.extTFS_luGhgEmissions
@@ -215,267 +215,267 @@ land_management_biogenic_co2_emissions:      # "0 se o valor v7 for negativo"
   type: double
 ```
 
-### Validações (`check`)
+### Validations (`check`)
 
-Corre depois do cast. Numa lista, valida cada elemento. Compara com tipo: `in: [1, 2, 3]` aceita `2.0`, mas o texto `"2"` não corresponde ao número `2`; `min`/`max` só aceitam números (`true` e o texto `"5"` não são numéricos). `min`, `max` e `in` são validados ao carregar.
+Runs after the cast. On a list, it validates each element. It compares with the type: `in: [1, 2, 3]` accepts `2.0`, but the text `"2"` does not match the number `2`; `min`/`max` only accept numbers (`true` and the text `"5"` are not numeric). `min`, `max` and `in` are validated at load time.
 
 ```yaml
 company_ids:
   path: companyIds
   type: array<string>
   check:
-    regex: "^urn:.*BPNL[0-9A-Z]{12}$"   # formato
-    min: 0                              # intervalo (números)
+    regex: "^urn:.*BPNL[0-9A-Z]{12}$"   # format
+    min: 0                              # range (numbers)
     max: 100
-    in: [cut-off, reverse cut-off]      # lista de valores fechada (ignore_case: true para ignorar maiúsculas)
-    required: true                      # obrigatório
-    required_if: {path: pcf.massBalancingUsed, op: eq, value: true}   # obrigatório se...
-    on_fail: warn                       # warn (omissão) | null | skip_row | fail
+    in: [cut-off, reverse cut-off]      # closed list of values (ignore_case: true to ignore case)
+    required: true                      # required
+    required_if: {path: pcf.massBalancingUsed, op: eq, value: true}   # required if...
+    on_fail: warn                       # warn (default) | null | skip_row | fail
 ```
 
-As falhas aparecem no relatório da carga (tabela, coluna, ficheiro, valor) e no resumo do `--dry-run` (`checks falhados={coluna: n}`). Com `on_fail: fail` o documento é rejeitado.
+Failures appear in the load report (table, column, file, value) and in the `--dry-run` summary (`failed checks={column: n}`). With `on_fail: fail` the document is rejected.
 
-### Caminhos
+### Paths
 
-| Sintaxe | Resultado |
+| Syntax | Result |
 |---|---|
-| `a.b.c` | campo aninhado |
-| `lista[0]`, `lista[-1]` | por índice |
-| `lista[*].campo` | todos (lista) |
-| `lista[?key=manufacturerId].value` | filtro (`=`, `!=`, `~` regex, `[?campo]` existe) |
-| `['chave.com.pontos']` | chave especial |
-| `$root.catenaXId` | raiz do documento (útil dentro de `explode`) |
-| `$parent.x`, `$parent.$parent.x` | nível de explode acima |
-| `$index`, `$parent.$index` | posição na lista |
-| `$item` | o próprio elemento (listas de escalares) |
-| `$meta.source_file` / `semantic_id` / `ingested_at` / `document_id` | metadados |
+| `a.b.c` | nested field |
+| `list[0]`, `list[-1]` | by index |
+| `list[*].field` | all (a list) |
+| `list[?key=manufacturerId].value` | filter (`=`, `!=`, `~` regex, `[?field]` exists) |
+| `['key.with.dots']` | special key |
+| `$root.catenaXId` | root of the document (useful inside `explode`) |
+| `$parent.x`, `$parent.$parent.x` | explode level above |
+| `$index`, `$parent.$index` | position in the list |
+| `$item` | the element itself (lists of scalars) |
+| `$meta.source_file` / `semantic_id` / `ingested_at` / `document_id` | metadata |
 
-**Campo ausente e caminho errado não são a mesma coisa.** Um campo que não existe (ou um objecto intermédio a `null`) dá nulo, como sempre. Um caminho que não tem a forma do documento é um **erro** (com o `on_error` da coluna), porque antes dava nulo em silêncio:
+**An absent field and a wrong path are not the same thing.** A field that does not exist (or an intermediate object that is `null`) gives null, as always. A path that does not fit the document's shape is an **error** (with the column's `on_error`), because before it silently gave null:
 
-| Caminho | Documento | Resultado |
+| Path | Document | Result |
 |---|---|---|
-| `childItems.quantity` | `childItems` é uma lista | erro: use `childItems[*].quantity` |
-| `xs[?k=a][0].v` | o `[0]` aplica-se a cada resultado do filtro (um objecto) | erro: para o 1.º resultado use `xs[?k=a].v \| first` |
-| `block[0].c` | `block` foi desembrulhado pelo `unwrap` | erro: retire o índice |
-| `name.first` | `name` é texto | erro |
-| explode para um valor simples | | erro: o documento é rejeitado |
+| `childItems.quantity` | `childItems` is a list | error: use `childItems[*].quantity` |
+| `xs[?k=a][0].v` | the `[0]` applies to each result of the filter (an object) | error: for the 1st result use `xs[?k=a].v \| first` |
+| `block[0].c` | `block` was unwrapped by the `unwrap` | error: remove the index |
+| `name.first` | `name` is text | error |
+| explode to a simple value | | error: the document is rejected |
 
-No `match` (reconhecer o submodelo) um caminho com outra forma conta apenas como "não corresponde", porque serve para distinguir versões.
+In `match` (recognising the submodel) a path with another shape only counts as "no match", because it serves to tell versions apart.
 
-**Filtros com tipos.** `[?k=abc]` ou `[?k='abc']` é texto; `[?n=1]` é número (`1` e `1.0` são iguais); `[?b=true]` booleano; `[?x=null]` nulo (ou ausente). Comparar tipos diferentes (`[?v='1']` com o número 1) é um erro, em vez de nunca corresponder. Entre aspas o valor pode ter `=`, `~` e `]` (`[?key='a=b]c']`), e o operador é o primeiro que aparece: `[?key~a=b]` é o regex `a=b`.
+**Filters with types.** `[?k=abc]` or `[?k='abc']` is text; `[?n=1]` is a number (`1` and `1.0` are equal); `[?b=true]` a boolean; `[?x=null]` null (or absent). Comparing different types (`[?v='1']` with the number 1) is an error, instead of never matching. In quotes the value may contain `=`, `~` and `]` (`[?key='a=b]c']`), and the operator is the first one that appears: `[?key~a=b]` is the regex `a=b`.
 
-**Elementos sem o campo (`missing_elements`).** Com `[*]` ou um filtro, se algum elemento não tiver o campo a coluna dá erro, a não ser que se declare o que fazer — `first`, `count`, `join`, `sum` e os arrays dariam resultados diferentes consoante a interpretação:
+**Elements without the field (`missing_elements`).** With `[*]` or a filter, if some element does not have the field the column is an error, unless you declare what to do — `first`, `count`, `join`, `sum` and arrays would give different results depending on the interpretation:
 
 ```yaml
-co2_por_etapa:
+co2_per_stage:
   path: stages[*].co2
-  missing_elements: null     # um nulo por elemento em falta: [1.5, null, 2.0]
-  # missing_elements: skip   # só os valores encontrados: [1.5, 2.0] (o resultado antigo)
+  missing_elements: null     # one null per missing element: [1.5, null, 2.0]
+  # missing_elements: skip   # only the values found: [1.5, 2.0] (the old result)
   type: array<double>
 ```
 
-Ambos ficam contados no relatório. Num `template` ou no `document_id.from` não se aceitam elementos em falta.
+Both are counted in the report. Missing elements are not accepted in a `template` or in `document_id.from`.
 
-**Validação na carga.** Antes de ler qualquer documento, todos os caminhos (colunas, `paths`, `template`, `cases`, `where`, `check.required_if`, `explode`, `document_id.from`) são verificados: sintaxe, `$parent` acima da raiz, `$index` numa tabela sem `explode`, chaves de `$meta` desconhecidas. Com `model.schema` no submodelo, cada caminho é percorrido no schema do modelo, já com o `unwrap` aplicado: um campo que não existe dá erro com sugestão (`'fossilGHGEmissions' não existe … Quis dizer 'fossilGhgEmissions'?`), tal como um campo pedido a uma lista sem `[*]`, um índice numa lista desembrulhada, um `explode` que não é lista e caminhos do `unwrap` que não existem. Para um campo fora do schema (ex.: extensão), declare `outside_model: true` na coluna.
+**Validation at load time.** Before any document is read, every path (columns, `paths`, `template`, `cases`, `where`, `check.required_if`, `explode`, `document_id.from`) is checked: syntax, `$parent` above the root, `$index` in a table without `explode`, unknown `$meta` keys. With `model.schema` on the submodel, each path is walked in the model's schema, with the `unwrap` already applied: a field that does not exist is an error with a suggestion (`field 'fossilGHGEmissions' does not exist … Did you mean 'fossilGhgEmissions'?`), as is a field asked of a list without `[*]`, an index on an unwrapped list, an `explode` that is not a list and `unwrap` paths that do not exist. For a field outside the schema (e.g. an extension), declare `outside_model: true` on the column.
 
-### Transformações
+### Transformations
 
-| Grupo | Transformações |
+| Group | Transformations |
 |---|---|
-| texto | `trim upper lower snake_case prefix suffix replace regex_replace regex_extract substring split join to_string length` |
+| text | `trim upper lower snake_case prefix suffix replace regex_replace regex_extract substring split join to_string length` |
 | Catena-X | `urn_suffix` (`urn:uuid:x`→`x`), `semantic_id_parts` (namespace/version/name), `unit_convert` (`{value, unit: "unit:gram"}`→kg, m, l, s, kWh, …) |
-| valores | `default null_if map const` (`map` aceita `_default`, `_null` e `_ignore_case: true`) |
-| números | `to_number multiply divide add round abs clamp` (`round: {digits: 2, mode: half_up}`; `clamp: {min: 0}` / `{max: 0}`; `to_number: {decimal: ",", thousands: "."}`) |
-| datas | `to_timestamp to_date date_format year month now today` (`to_timestamp: {unit: s}` para números) |
-| listas | `first last single count distinct sort compact sum min max pluck` (`sum: {nulls: skip}`) |
+| values | `default null_if map const` (`map` accepts `_default`, `_null` and `_ignore_case: true`) |
+| numbers | `to_number multiply divide add round abs clamp` (`round: {digits: 2, mode: half_up}`; `clamp: {min: 0}` / `{max: 0}`; `to_number: {decimal: ",", thousands: "."}`) |
+| dates | `to_timestamp to_date date_format year month now today` (`to_timestamp: {unit: s}` for numbers) |
+| lists | `first last single count distinct sort compact sum min max pluck` (`sum: {nulls: skip}`) |
 | JSON | `to_json from_json keys get` |
-| outros | `to_bool hash uuid5 uuid4` |
+| others | `to_bool hash uuid5 uuid4` |
 
-Nenhuma transformação muda ou perde um valor sem o dizer. Os nomes e os argumentos são validados ao carregar a configuração.
+No transformation changes or loses a value without saying so. Names and arguments are validated when the configuration is loaded.
 
-| Transformação | Regra |
+| Transformation | Rule |
 |---|---|
-| `multiply divide add sum round clamp unit_convert` | contas exactas sobre o valor escrito: `0.1 * 3` dá `0.3` (em float dava `0.30000000000000004`); booleanos não são números |
-| `sum min max` | um nulo na lista é erro (o total seria parcial); `{nulls: skip}` ignora-os e conta-os |
-| `min max sort` | números como números, datas ISO como instantes (`10:00+02:00` é antes de `09:00Z`); números em texto (`["9", "10"]`) e tipos misturados dão erro |
-| `round` | o modo é obrigatório (`half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor`): `0.125` dá `0.12` ou `0.13` conforme o modo |
-| `clamp` | cada valor alterado fica contado no relatório |
-| `single` | o único valor da lista; vários valores diferentes são erro (`first` escolheria um em silêncio) |
-| `distinct null_if map` | comparam com tipo: `true`, `1` e `"1"` são diferentes (`1` e `1.0` iguais). Em `map`, um valor que só corresponde a uma chave de outro tipo (o número `1` e a chave `"1"`) é erro |
-| `unit_convert` | quantidade sem unidade é erro; `from:` é a unidade a assumir quando o documento não a traz (contado). `value`/`quantityNumber` e `unit`/`measurementUnit` diferentes no mesmo objecto são erro |
-| `to_bool` | um valor que não é booleano reconhecido é erro (antes: nulo) |
-| `regex_extract` | sem correspondência é erro; `{pattern: ..., no_match: null}` anula e conta |
-| `join` | nulos na lista são erro (`""` e nulo ficariam iguais); use `compact` antes |
-| `pluck get keys semantic_id_parts` | aplicados a algo que não serve (ex.: `get` numa lista) são erro |
-| `to_string join to_json` | texto igual ao das colunas `string`: `true`/`false`, JSON para objectos, datas ISO; números do documento como foram escritos |
-| `to_timestamp` | ver "Datas" |
+| `multiply divide add sum round clamp unit_convert` | exact arithmetic on the written value: `0.1 * 3` gives `0.3` (as float it gave `0.30000000000000004`); booleans are not numbers |
+| `sum min max` | a null in the list is an error (the total would be partial); `{nulls: skip}` ignores and counts them |
+| `min max sort` | numbers as numbers, ISO dates as instants (`10:00+02:00` is before `09:00Z`); numbers as text (`["9", "10"]`) and mixed types are errors |
+| `round` | the mode is required (`half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor`): `0.125` gives `0.12` or `0.13` depending on the mode |
+| `clamp` | each changed value is counted in the report |
+| `single` | the list's only value; several different values are an error (`first` would silently pick one) |
+| `distinct null_if map` | compare with their type: `true`, `1` and `"1"` are different (`1` and `1.0` equal). In `map`, a value that only matches a key of another type (the number `1` and the key `"1"`) is an error |
+| `unit_convert` | a quantity without a unit is an error; `from:` is the unit to assume when the document does not have one (counted). Different `value`/`quantityNumber` and `unit`/`measurementUnit` in the same object are an error |
+| `to_bool` | a value that is not a recognised boolean is an error (before: null). `yes`/`no`, `y`/`n`, `1`/`0` and the Portuguese `sim`/`não` are recognised |
+| `regex_extract` | no match is an error; `{pattern: ..., no_match: null}` sets it to null and counts it |
+| `join` | nulls in the list are an error (`""` and null would look the same); use `compact` first |
+| `pluck get keys semantic_id_parts` | applied to something that does not fit (e.g. `get` on a list) are errors |
+| `to_string join to_json` | the same text as `string` columns: `true`/`false`, JSON for objects, ISO dates; document numbers as they were written |
+| `to_timestamp` | see "Dates" |
 
-Transformações próprias:
+Your own transformations:
 
 ```python
-# meu_modulo.py  (declarado em plugins: [meu_modulo])
+# my_module.py  (declared in plugins: [my_module])
 from cx2iceberg import register
 
-@register("bpn_valido")
-def bpn_valido(value, arg):
+@register("valid_bpn")
+def valid_bpn(value, arg):
     return value if value and value.startswith("BPNL") and len(value) == 16 else None
 ```
 
-### Tipos
+### Types
 
-`string tinyint smallint int bigint double float decimal(p,s) boolean timestamp date json array<T> map<K,V> struct<campo:T,...>`, aninháveis à vontade
-(`json` grava o objecto serializado numa coluna string; `tinyint` e `smallint` validam o intervalo de cada valor, mas na tabela ficam `int`, porque o Iceberg não tem inteiros de 8/16 bits).
+`string tinyint smallint int bigint double float decimal(p,s) boolean timestamp date json array<T> map<K,V> struct<field:T,...>`, nestable at will
+(`json` stores the serialized object in a string column; `tinyint` and `smallint` validate each value's range, but in the table they are `int`, because Iceberg has no 8/16-bit integers).
 
-**Struct**: um dicionário com vários níveis num único campo, consultável com `coluna.campo.subcampo` no Athena.
+**Struct**: a dictionary with several levels in a single field, queryable with `column.field.subfield` in Athena.
 
 ```yaml
 columns:
-  life_cycle: { path: productLifeCycleStagesAndEmissions, type: struct }          # estrutura inferida dos dados
-  attestations: { path: attestationOfConformance, type: "array<struct>" }         # lista de objectos
-  time:                                                                            # estrutura explícita
+  life_cycle: { path: productLifeCycleStagesAndEmissions, type: struct }          # structure inferred from the data
+  attestations: { path: attestationOfConformance, type: "array<struct>" }         # list of objects
+  time:                                                                            # explicit structure
     path: pcfAssessmentAndMethodology.pcfAssessmentInformation.time
     type: "struct<reference_period_start:timestamp, referencePeriodEnd:timestamp>"
 ```
 
-Os nomes dos campos do struct passam a snake_case e casam com as chaves camelCase do JSON. Os campos que não estão no tipo são ignorados. Uma lista de 1 elemento é aceite como objecto; com mais de 1 dá erro.
-Prefira tipos **explícitos** (o `init --style struct` gera-os a partir do schema SAMM): com `type: struct`, a estrutura depende dos dados de cada carga, e o Iceberg só deixa *acrescentar* campos a um struct, não mudar o tipo de um campo existente. Um objecto sem campos (`{}`) fica `json`, porque o Athena não aceita `struct<>`.
-Sem `type`, o tipo é inferido. Números sem tipo ficam **double**, porque o JSON não distingue `1` de `1.0` e o Iceberg não deixa promover `bigint` para `double` depois. Mas um valor que mudaria nessa inferência rejeita o documento: um inteiro acima de 2^53 ou um número com mais algarismos do que um double guarda, e uma lista com tipos misturados (ficariam todos texto). Se a mesma coluna sem tipo recebe tipos diferentes no lote (`1.5` num documento, `"n/a"` noutro), a carga falha com exemplos de cada tipo: declare o `type`, e os valores que não servirem passam a ser rejeitados só no seu documento. Uma coluna sem tipo que no lote só tem nulos não é criada (o tipo seria adivinhado e ficaria na tabela Iceberg); fica um aviso no relatório.
+The struct's field names become snake_case and match the JSON's camelCase keys. Fields that are not in the type are ignored. A 1-element list is accepted as an object; with more than 1 it is an error.
+Prefer **explicit** types (`init --style struct` generates them from the SAMM schema): with `type: struct`, the structure depends on each load's data, and Iceberg only lets you *add* fields to a struct, not change the type of an existing field. An object without fields (`{}`) becomes `json`, because Athena does not accept `struct<>`.
+Without `type`, the type is inferred. Untyped numbers become **double**, because JSON does not tell `1` from `1.0` and Iceberg does not let you promote `bigint` to `double` later. But a value that would change in that inference rejects the document: an integer above 2^53 or a number with more digits than a double holds, and a list with mixed types (they would all become text). If the same untyped column gets different types in the batch (`1.5` in one document, `"n/a"` in another), the load fails with examples of each type: declare the `type`, and values that do not fit are then rejected only in their own document. An untyped column with only nulls in the batch is not created (the type would be guessed and would stay in the Iceberg table); there is a warning in the report.
 
-#### Casts sem perdas
+#### Lossless casts
 
-| Tipo | Regra |
+| Type | Rule |
 |---|---|
-| `tinyint smallint int bigint` | fora do intervalo do tipo (`300` num `tinyint`) é erro (antes só falhava na escrita); casas decimais são erro |
-| `decimal(p,s)` | mais casas decimais do que `s` é erro, a não ser com `rounding` na coluna; mais algarismos do que `p - s` antes da vírgula é erro. `p` até 38 |
-| `double` | o número tem de sair do double como foi escrito: `9007199254740993` ou `0.12345678901234567890` dão erro, a não ser com `rounding: nearest` |
-| `float` | é um float de **32 bits** (`real` no Athena): `1.23456789` ficaria `1.2345679` → erro, a não ser com `rounding: nearest`. Para números com casas decimais use `double` |
-| todos os números | booleanos não são números (`true` num `double` era `1.0`) |
-| `string` | números do documento como foram escritos, `true`/`false`, JSON para objectos |
-| `json` | texto tem de ser JSON válido (antes `"abc"` era guardado tal e qual) |
-| `map struct` | duas chaves que dão a mesma chave no tipo (`"1"` e `"1.0"` num `map<double,…>`; `fossilGhg` e `fossil_ghg` num struct) é erro |
+| `tinyint smallint int bigint` | outside the type's range (`300` in a `tinyint`) is an error (before, it only failed at write time); decimal places are an error |
+| `decimal(p,s)` | more decimal places than `s` is an error, unless the column has `rounding`; more digits than `p - s` before the decimal point is an error. `p` up to 38 |
+| `double` | the number must come out of the double as it was written: `9007199254740993` or `0.12345678901234567890` are errors, unless `rounding: nearest` |
+| `float` | it is a **32-bit** float (`real` in Athena): `1.23456789` would become `1.2345679` → error, unless `rounding: nearest`. For numbers with decimal places use `double` |
+| every number | booleans are not numbers (`true` in a `double` was `1.0`) |
+| `string` | document numbers as they were written, `true`/`false`, JSON for objects |
+| `json` | text must be valid JSON (before, `"abc"` was stored as it was) |
+| `map struct` | two keys that give the same key in the type (`"1"` and `"1.0"` in a `map<double,…>`; `fossilGhg` and `fossil_ghg` in a struct) are an error |
 
 ```yaml
-valor_kg:  {path: valor, type: "decimal(12,3)", rounding: half_up}   # arredonda e conta no relatório
-rácio:     {path: r, type: double, rounding: nearest}                # aceita o double mais próximo
+value_kg:  {path: value, type: "decimal(12,3)", rounding: half_up}   # rounds and counts it in the report
+ratio:     {path: r, type: double, rounding: nearest}                # accepts the nearest double
 ```
 
-#### Datas
+#### Dates
 
-Texto de datas só no formato do schema SAMM (`xsd:dateTime`): `2022-01-01T10:00:00`, fracção opcional, `Z` ou `±hh:mm` até ±14:00; ou uma data `2022-01-01` (com fuso opcional). O leitor de datas do Python aceitava muito mais (`2022-01-01 10:00`, `20220101T1000`, `+0200`, semanas ISO) e lia `2022-01-01+02:00` — uma data com fuso — como as 02:00 desse dia. Outros formatos: `to_timestamp: {format: "%d/%m/%Y %H:%M %z"}`. `24:00:00` (fim do dia, válido no schema) é o instante 00:00 do dia seguinte; para `date`, `year`, `month` e `date_format` é ambíguo (`2022-12-31T24:00:00` é fim de 2022 ou início de 2023) e dá erro. Anos fora de 0001–9999 não são suportados.
+Date text only in the SAMM schema's format (`xsd:dateTime`): `2022-01-01T10:00:00`, optional fraction, `Z` or `±hh:mm` up to ±14:00; or a date `2022-01-01` (with an optional time zone). Python's date reader accepted much more (`2022-01-01 10:00`, `20220101T1000`, `+0200`, ISO weeks) and read `2022-01-01+02:00` — a date with a time zone — as 02:00 on that day. Other formats: `to_timestamp: {format: "%d/%m/%Y %H:%M %z"}`. `24:00:00` (end of the day, valid in the schema) is the instant 00:00 of the next day; for `date`, `year`, `month` and `date_format` it is ambiguous (`2022-12-31T24:00:00` is the end of 2022 or the start of 2023) and an error. Years outside 0001–9999 are not supported.
 
-`timestamp` é um instante: com fuso (`Z`, `+02:00`) é convertido para UTC. Sem fuso (`2022-01-01T10:00:00`) o formato é válido no schema, mas o instante é desconhecido: dá erro, a não ser que se declare `input.naive_timestamps: utc` ou o fuso IANA do emissor (`Europe/Berlin`). Com um fuso, horas que não existem ou acontecem duas vezes na mudança de hora são erro. Uma data sem hora usada como timestamp (fica a meia-noite) também precisa dessa declaração. Cada valor assumido fica contado. Só o `timestamp` precisa de fuso: datas, anos e meses usam o que foi escrito. `date`, `to_date`, `year`, `month` e `date_format` usam a data tal como foi escrita, no fuso do documento: `2023-07-11T01:00:00+02:00` é o dia 11 (em UTC seria o dia 10). Um número só é data com a unidade declarada (`to_timestamp: {unit: s}` ou `{unit: ms}`); antes, `year` de `2022` dava 1970. Fracções abaixo do microssegundo não cabem num timestamp Iceberg: ficam cortadas e contadas. `today` é a data UTC, como `now`.
+`timestamp` is an instant: with a time zone (`Z`, `+02:00`) it is converted to UTC. Without one (`2022-01-01T10:00:00`) the format is valid in the schema, but the instant is unknown: it is an error, unless you declare `input.naive_timestamps: utc` or the sender's IANA time zone (`Europe/Berlin`). With a time zone, times that do not exist or happen twice at a clock change are errors. A date without a time used as a timestamp (it becomes midnight) also needs that declaration. Each assumed value is counted. Only `timestamp` needs a time zone: dates, years and months use what was written. `date`, `to_date`, `year`, `month` and `date_format` use the date as it was written, in the document's time zone: `2023-07-11T01:00:00+02:00` is the 11th (in UTC it would be the 10th). A number is only a date with the unit declared (`to_timestamp: {unit: s}` or `{unit: ms}`); before, `year` of `2022` gave 1970. Fractions below the microsecond do not fit in an Iceberg timestamp: they are truncated and counted. `today` is the UTC date, like `now`.
 
-#### Números em texto
+#### Numbers as text
 
-Um número que chega como texto (`"2.5"`) é lido **só** se seguir o formato dos números JSON (`123`, `-1.5`, `2e3`, com dígitos 0–9 e espaços à volta); fica contado no relatório como aviso. O que for ambíguo ou não for um número dá erro, com a razão:
+A number that arrives as text (`"2.5"`) is read **only** if it follows the format of JSON numbers (`123`, `-1.5`, `2e3`, with digits 0–9 and spaces around it); it is counted in the report as a warning. What is ambiguous or not a number is an error, with the reason:
 
-| Texto | Sem formato declarado | Porquê |
+| Text | Without a declared format | Why |
 |---|---|---|
-| `"1.234"`, `"12.345"`, `"1,234"` | erro | pode ser separador de milhares (1234) ou decimal (1,234) |
-| `"1,5"`, `"1.234,5"` | erro | vírgula: é preciso declarar o formato |
-| `"1_000"`, `"+5"`, `"007"`, `".5"`, `"0x10"` | erro | não é o formato JSON |
-| `"١٢٣"`, `"１２３"` (dígitos não-ASCII) | erro | o Python aceitava-os em silêncio |
-| `"NaN"`, `"inf"`, `"1e400"`, `"1e-400"` | erro | não é finito / não cabe num double |
-| `""` ou só espaços (coluna numérica) | nulo, com aviso | |
+| `"1.234"`, `"12.345"`, `"1,234"` | error | it may be a thousands separator (1234) or a decimal (1.234) |
+| `"1,5"`, `"1.234,5"` | error | comma: the format must be declared |
+| `"1_000"`, `"+5"`, `"007"`, `".5"`, `"0x10"` | error | not the JSON format |
+| `"١٢٣"`, `"１２３"` (non-ASCII digits) | error | Python silently accepted them |
+| `"NaN"`, `"inf"`, `"1e400"`, `"1e-400"` | error | not finite / does not fit in a double |
+| `""` or only spaces (numeric column) | null, with a warning | |
 
-Para números com outro formato, declare-o com `to_number` (a mesma regra vale para `multiply`, `add`, `unit_convert`…):
+For numbers in another format, declare it with `to_number` (the same rule applies to `multiply`, `add`, `unit_convert`…):
 
 ```yaml
-quantidade: {path: qtd, transform: {to_number: {decimal: ",", thousands: "."}}, type: double}   # "1.234,5" -> 1234.5
+quantity: {path: qty, transform: {to_number: {decimal: ",", thousands: "."}}, type: double}   # "1.234,5" -> 1234.5
 ```
 
-Os separadores de milhares têm de estar em grupos de 3 (`"1.23,4"` dá erro). Os nomes e os argumentos das transformações são validados ao carregar a configuração: um nome mal escrito pára a carga logo (antes, com `on_error: null`, anulava todos os valores da coluna).
+Thousands separators must be in groups of 3 (`"1.23,4"` is an error). Transformation names and arguments are validated when the configuration is loaded: a misspelled name stops the load straight away (before, with `on_error: null`, it set every value of the column to null).
 
-### UUID que liga as tabelas (`document_id`)
+### The UUID that links the tables (`document_id`)
 
-Quando um submodelo dá origem a várias tabelas (`explode`, `auto_normalize`), `document_id` acrescenta a **todas** a mesma coluna com um UUID por documento, para os JOINs:
+When a submodel produces several tables (`explode`, `auto_normalize`), `document_id` adds to **all** of them the same column with one UUID per document, for the JOINs:
 
 ```yaml
 submodels:
   - name: serial_part
     document_id:
-      column: serial_part_uuid     # omissão: document_id
-      from: catenaXId              # ou lista: [id, {path: version, type: int}]
+      column: serial_part_uuid     # default: document_id
+      from: catenaXId              # or a list: [id, {path: version, type: int}]
       # strategy: key | content | random
-      # namespace: cx2iceberg      # muda o espaço de UUIDs (ex.: um por ambiente)
-      # on_missing: fail           # campo de from em falta: fail (omissão) | content
+      # namespace: cx2iceberg      # changes the UUID space (e.g. one per environment)
+      # on_missing: fail           # a from field missing: fail (default) | content
 ```
 
-| strategy | UUID | Reprocessar o mesmo documento |
+| strategy | UUID | Reprocessing the same document |
 |---|---|---|
-| `key` (com `from`) | uuid5 dos campos indicados | mesmo UUID, mesmo que o conteúdo mude: o `merge` actualiza as linhas |
-| `content` (`document_id: true`) | uuid5 do conteúdo inteiro | mesmo UUID só se nada mudou |
-| `random` | uuid4 | UUID novo em cada carga: só para tabelas `append` |
+| `key` (with `from`) | uuid5 of the given fields | the same UUID, even if the content changes: `merge` updates the rows |
+| `content` (`document_id: true`) | uuid5 of the whole content | the same UUID only if nothing changed |
+| `random` | uuid4 | a new UUID on each load: only for `append` tables |
 
-Recomenda-se `key`. Com `random`, reprocessar um ficheiro duplica as linhas das tabelas filhas.
-Os caminhos de `from` contam **depois** do `unwrap`. Se um campo de `from` faltar num documento, o documento é rejeitado: o UUID mudaria quando o campo aparecesse, e o `merge` duplicaria as linhas. Com `on_missing: content` usa-se o conteúdo (contado).
-Campos de `from` que não são texto precisam do tipo: `{path: version, type: int}`. O valor é convertido antes do UUID, por isso `0`, `"0"` e `0.0` dão o mesmo UUID (antes davam três). Com os mesmos valores e o mesmo `namespace`, o UUID é igual entre submodelos: o mesmo PCF (`id` + `version`) tem o mesmo UUID venha em v7 ou em v9.
+`key` is recommended. With `random`, reprocessing a file duplicates the child tables' rows.
+The `from` paths apply **after** the `unwrap`. If a `from` field is missing in a document, the document is rejected: the UUID would change once the field appeared, and `merge` would duplicate the rows. With `on_missing: content` the content is used (counted).
+`from` fields that are not text need a type: `{path: version, type: int}`. The value is converted before the UUID, so `0`, `"0"` and `0.0` give the same UUID (before, they gave three). With the same values and the same `namespace`, the UUID is the same across submodels: the same PCF (`id` + `version`) has the same UUID whether it comes as v7 or v9.
 
-> **Migração (UUIDs já gravados).** Para campos de texto e números inteiros o UUID não mudou. Mudou para documentos em que uma parte do `from` vinha como texto (`"0"`) ou com casas decimais (`0.0`) e agora é declarada como inteiro: esses documentos passam a ter o UUID dos restantes. Se tabelas já gravadas tiverem linhas com o UUID antigo, reprocesse esses documentos e apague as linhas com o UUID antigo (nas tabelas filhas com `replace_by`, as linhas antigas não são apagadas porque o UUID é outro).
+> **Migration (UUIDs already stored).** For text fields and integers the UUID did not change. It changed for documents in which a part of `from` came as text (`"0"`) or with decimal places (`0.0`) and is now declared as an integer: those documents now get the same UUID as the others. If tables already written have rows with the old UUID, reprocess those documents and delete the rows with the old UUID (in child tables with `replace_by`, the old rows are not deleted because the UUID is different).
 
-`hash` e `uuid5` só aceitam texto ou objectos/listas: um número sozinho é erro (`1` e `1.0` dariam identidades diferentes); use `to_string` ou um `template` antes. Um `template` com **todas** as partes em falta dá nulo, como um campo ausente. Com só **algumas** em falta é um erro: as partes presentes perder-se-iam (nulo) ou o valor ficaria errado (`"P|"`, igual para todos os elementos sem a parte). Declare `template_missing: empty` (partes em falta vazias) ou `template_missing: null` (valor nulo) na coluna; ambos ficam contados.
-No `auto_normalize` sem `id_path`, o UUID passa a ser a chave da tabela raiz e das tabelas filhas. Está também disponível em caminhos como `$meta.document_id`.
+`hash` and `uuid5` only accept text or objects/lists: a number on its own is an error (`1` and `1.0` would give different identities); use `to_string` or a `template` first. A `template` with **all** parts missing gives null, like an absent field. With only **some** missing it is an error: the present parts would be lost (null) or the value would be wrong (`"P|"`, the same for every element without the part). Declare `template_missing: empty` (missing parts left empty) or `template_missing: null` (a null value) on the column; both are counted.
+In `auto_normalize` without `id_path`, the UUID becomes the key of the root table and of the child tables. It is also available in paths as `$meta.document_id`.
 
-### Listas 1:1 (`unwrap`)
+### 1:1 lists (`unwrap`)
 
-Muitos modelos Catena-X (ex.: PCF 9.0) embrulham cada bloco numa lista de um só elemento: `pcfAssessmentAndMethodology[0].pcfAssessmentInformation[0].time[0].created`. O `unwrap` (ao nível do submodelo) trata essas listas como objectos **antes** de aplicar as regras, por isso os caminhos ficam sem `[0]` e o modo automático deixa de criar tabelas de 1 linha.
+Many Catena-X models (e.g. PCF 9.0) wrap each block in a single-element list: `pcfAssessmentAndMethodology[0].pcfAssessmentInformation[0].time[0].created`. The `unwrap` (at submodel level) treats those lists as objects **before** applying the rules, so the paths have no `[0]` and auto mode no longer creates 1-row tables.
 
 ```yaml
 submodels:
   - name: pcf9
     unwrap:
-      all: true                         # todas as listas de objectos...
-      except: [attestationOfConformance] # ...menos as que têm mesmo vários elementos
-      on_multiple: fail                 # fail (omissão) | first (usa o 1º e avisa) | keep (deixa a lista)
-    # ou: unwrap: [general, carbonContent, productLifeCycleStagesAndEmissions.productionStage]
+      all: true                         # every list of objects...
+      except: [attestationOfConformance] # ...except those that really have several elements
+      on_multiple: fail                 # fail (default) | first (uses the 1st and warns) | keep (leaves the list)
+    # or: unwrap: [general, carbonContent, productLifeCycleStagesAndEmissions.productionStage]
 ```
 
-Os caminhos não levam índices e contam desde a raiz. Com `all`, as listas de valores simples (ex.: `productIds`) não são tocadas. Uma lista indicada explicitamente e vazia passa a nulo.
-Se aparecer uma lista com mais de um elemento onde se esperava um, a carga **falha** com o ficheiro e o caminho em causa, para nada se perder em silêncio.
+The paths take no indices and start at the root. With `all`, lists of simple values (e.g. `productIds`) are not touched. A list given explicitly that is empty becomes null.
+If a list with more than one element shows up where one was expected, the load **fails** with the file and path concerned, so nothing is silently lost.
 
-### Modo automático
+### Auto mode
 
-* `auto: true` numa tabela: achata todos os campos escalares do objecto actual (`a.b.c` → `a_b_c`), listas de escalares viram `array<...>`, datas ISO viram `timestamp`. As colunas explícitas têm prioridade. Opções: `auto_exclude`, `auto_max_depth`, `auto_lists: array|json|skip`, `auto_dates`, `auto_naming`.
-* `auto_naming: leaf` (ou `naming: leaf` no `auto_normalize`): nomes curtos. Usa só o último campo (`fossil_ghg_emissions`) e acrescenta níveis de cima **só onde há colisão** (`production_stage_packaging_land_management_biogenic_co2_emissions` vs `packaging_stage_…`). **Precisa de `model.schema`**: as colisões calculam-se sobre todos os campos do modelo (todas as alternativas de `oneOf`/`anyOf`), por isso cada campo tem sempre o mesmo nome, em todos os documentos e em todas as cargas. Antes calculavam-se com os campos de cada documento: na mesma carga, `ghg.fossil` ia para `fossil` num documento e para `ghg_fossil` noutro (que também tinha `other.fossil`), e a soma da coluna ficava errada sem nenhum aviso. Um campo que não está no modelo fica com o nome completo (`extra_fossil`) e é contado como aviso; se esse nome for o de um campo do modelo, é erro (colisão). Sem `model.schema`, `leaf` é um erro na configuração: use `full` ou gere colunas explícitas com `init --naming leaf`.
-* `auto_normalize` num submodelo: cria uma tabela raiz e **uma tabela por cada lista de objectos** (a qualquer profundidade), com o id da raiz e índices de posição como chave. As tabelas filhas usam `replace_by` para ficarem sincronizadas quando listas encolhem.
-* De onde vêm as tabelas filhas (`auto_normalize.children`):
-  * `schema` (omissão com `model.schema`): todas as listas do modelo, já com o `unwrap`, mais as que aparecerem nos dados. Uma lista que ficou vazia em **todos** os documentos do lote continua a ter tabela, e o `DELETE` das linhas antigas corre. Custo: em `merge`, um `DELETE` por tabela filha existente em cada carga (o PCF 9.0 sem `unwrap` tem 27; com `unwrap: {all: true}`, 2).
-  * `batch`: só as listas presentes no lote. Antes era sempre assim, e um documento cuja lista ficou vazia (sem outro documento do lote com essa lista) deixava as linhas antigas na tabela filha. Sem `model.schema`, e com um `mode` que não seja `append`, tem de ser declarado; fica contado no relatório em cada carga.
+* `auto: true` on a table: flattens every scalar field of the current object (`a.b.c` → `a_b_c`), lists of scalars become `array<...>`, ISO dates become `timestamp`. Explicit columns take precedence. Options: `auto_exclude`, `auto_max_depth`, `auto_lists: array|json|skip`, `auto_dates`, `auto_naming`.
+* `auto_naming: leaf` (or `naming: leaf` in `auto_normalize`): short names. It uses only the last field (`fossil_ghg_emissions`) and adds levels above **only where there is a collision** (`production_stage_packaging_land_management_biogenic_co2_emissions` vs `packaging_stage_…`). **It needs `model.schema`**: collisions are computed over every field of the model (every `oneOf`/`anyOf` alternative), so each field always has the same name, in every document and every load. Before, they were computed from each document's fields: in the same load, `ghg.fossil` went to `fossil` in one document and to `ghg_fossil` in another (which also had `other.fossil`), and the column's sum was wrong without any warning. A field that is not in the model keeps its full name (`extra_fossil`) and is counted as a warning; if that name is a model field's name, it is an error (a collision). Without `model.schema`, `leaf` is a configuration error: use `full` or generate explicit columns with `init --naming leaf`.
+* `auto_normalize` on a submodel: creates a root table and **one table for each list of objects** (at any depth), with the root's id and position indices as the key. The child tables use `replace_by` to stay in sync when lists shrink.
+* Where the child tables come from (`auto_normalize.children`):
+  * `schema` (the default with `model.schema`): every list of the model, with the `unwrap` applied, plus those that appear in the data. A list that was empty in **every** document of the batch still has a table, and the `DELETE` of the old rows runs. Cost: in `merge`, one `DELETE` per existing child table on each load (PCF 9.0 without `unwrap` has 27; with `unwrap: {all: true}`, 2).
+  * `batch`: only the lists present in the batch. It always used to be like this, and a document whose list became empty (with no other document of the batch having that list) left the old rows in the child table. Without `model.schema`, and with a `mode` other than `append`, it must be declared; it is counted in the report on every load.
 
 ```yaml
 model:
-  schema: schemas/pcf_7.0.0-schema.json   # fixa as tabelas filhas e os nomes leaf
+  schema: schemas/pcf_7.0.0-schema.json   # fixes the child tables and the leaf names
 auto_normalize:
   table_prefix: pcf
-  id_path: id          # omissão: catenaXId
+  id_path: id          # default: catenaXId
   id_column: pcf_id
   exclude: [comment]
-  naming: leaf         # full (omissão) | leaf (precisa de model.schema)
-  children: schema     # schema (omissão com model.schema) | batch
+  naming: leaf         # full (default) | leaf (needs model.schema)
+  children: schema     # schema (the default with model.schema) | batch
 ```
 
-### Colunas de metadados
+### Metadata columns
 
-`metadata_columns: true` acrescenta `cx_source_file`, `cx_semantic_id`, `cx_ingested_at` e `cx_record_hash` (sha256 dos dados da linha, útil para detectar alterações).
+`metadata_columns: true` adds `cx_source_file`, `cx_semantic_id`, `cx_ingested_at` and `cx_record_hash` (sha256 of the row's data, useful to detect changes).
 
-## Modelos profundos: o caso PCF 9.0
+## Deep models: the PCF 9.0 case
 
-O PCF 9.0 tem até 5 níveis e quase tudo são listas de 1 elemento. Sem `unwrap`, o `auto_normalize` gera **27 tabelas de 1 linha**. Há dois modelos que funcionam bem, ambos gerados a partir do schema oficial e testados com o exemplo oficial:
+PCF 9.0 has up to 5 levels and almost everything is a 1-element list. Without `unwrap`, `auto_normalize` generates **27 one-row tables**. There are two models that work well, both generated from the official schema and tested with the official example:
 
 | | [examples/pcf9_flat.yaml](examples/pcf9_flat.yaml) | [examples/pcf9_struct.yaml](examples/pcf9_struct.yaml) |
 |---|---|---|
-| Tabelas | 1 principal (todos os campos 1:1 como colunas) + 8 filhas (uma por lista real) | 1 |
-| Colunas | ~140 colunas simples | 12 (blocos como `struct`) |
-| Consulta | `SELECT fossil_ghg_emissions FROM pcf9` | `SELECT product_life_cycle_stages_and_emissions.production_stage.fossil_ghg_emissions FROM pcf9` |
-| Listas | tabelas `pcf9_product_ids`, `pcf9_attestation_of_conformance`, … (join por `pcf9_id`) | `array<...>` dentro da linha (`CROSS JOIN UNNEST`) |
-| Bom para | BI/dashboards, ferramentas que não lidam com tipos aninhados | manter a hierarquia do modelo, poucas colunas |
+| Tables | 1 main table (every 1:1 field as a column) + 8 child tables (one per real list) | 1 |
+| Columns | ~140 simple columns | 12 (blocks as `struct`) |
+| Query | `SELECT fossil_ghg_emissions FROM pcf9` | `SELECT product_life_cycle_stages_and_emissions.production_stage.fossil_ghg_emissions FROM pcf9` |
+| Lists | tables `pcf9_product_ids`, `pcf9_attestation_of_conformance`, … (joined by `pcf9_id`) | `array<...>` inside the row (`CROSS JOIN UNNEST`) |
+| Good for | BI/dashboards, tools that do not handle nested types | keeping the model's hierarchy, few columns |
 
-Os dois podem coexistir: as tabelas são independentes, por isso pode juntar ambos os `tables:` no mesmo submodelo.
+Both can coexist: the tables are independent, so you can put both `tables:` in the same submodel.
 
-### Listas para várias linhas (`explode`)
+### Lists to several rows (`explode`)
 
 ```yaml
-- name: pcf9_product_ids                 # lista de strings -> 1 linha por valor
+- name: pcf9_product_ids                 # list of strings -> 1 row per value
   explode: companyAndProductInformation.productInformation.productIds
   keys: [pcf9_id, value]
   columns:
@@ -483,7 +483,7 @@ Os dois podem coexistir: as tabelas são independentes, por isso pode juntar amb
     position: $index ::int
     value: $item
 
-- name: bom_lines                        # listas aninhadas: 1 linha por elemento do nível mais fundo
+- name: bom_lines                        # nested lists: 1 row per element of the deepest level
   explode: "orders[*].lines[*]"
   columns:
     order_no: $parent.no
@@ -491,159 +491,159 @@ Os dois podem coexistir: as tabelas são independentes, por isso pode juntar amb
     sku: sku
 ```
 
-`keep_empty: true` gera uma linha com nulos quando a lista está vazia (equivale a um LEFT JOIN). `replace_by: [id]` apaga primeiro as linhas antigas do mesmo documento, para que uma lista que encolheu não deixe restos.
+`keep_empty: true` generates a row with nulls when the list is empty (like a LEFT JOIN). `replace_by: [id]` first deletes the old rows of the same document, so a list that shrank leaves nothing behind.
 
-## Migração entre versões de um modelo
+## Migration between versions of a model
 
-[examples/pcf_v7_to_v9.yaml](examples/pcf_v7_to_v9.yaml) põe PCF 7.0.0 e PCF 9.0.0 na mesma tabela, com colunas V9. Tem um exemplo comentado de cada tipo de transformação que um mapping de versões costuma pedir:
+[examples/pcf_v7_to_v9.yaml](examples/pcf_v7_to_v9.yaml) puts PCF 7.0.0 and PCF 9.0.0 in the same table, with V9 columns. It has a commented example of each kind of transformation a version mapping usually needs:
 
-| | Transformação | Como |
+| | Transformation | How |
 |---|---|---|
-| 1 | renomear campo | nome da coluna ≠ caminho |
-| 2 | mudar de nível / estrutura | caminho completo, `unwrap` |
-| 3 | nomes alternativos na origem (`x; extWBCSD_x`) | `paths: [a, b]` |
-| 4 | campo inexistente na origem → vazio | `const: null` com `type` |
-| 5 | campo descartado | não mapear |
-| 6 | lista de objectos → lista de valores | `lista[*].campo` |
-| 7 | listas aninhadas achatadas | `a[*].b[*].campo` |
-| 8 | valor simples → lista | `type: array<...>` |
-| 9 | um campo → vários destinos, condicional; troca de sinal | `cases`, `clamp`, `multiply: -1` |
-| 10 | formato (ex.: URN com BPN) | `check.regex` |
-| 11 | intervalo (0–100) | `check.min/max` |
-| 12 | lista de valores fechada, valores antigos → novos | `map` + `check.in` |
-| 13 | obrigatório condicional ("M if …") | `check.required_if` |
-| 14 | valor por omissão | `default` |
-| 15 | várias versões na mesma tabela | um submodelo por versão, mesmo `name` de tabela, `match.any` por semantic id ou `specVersion` |
+| 1 | rename a field | column name ≠ path |
+| 2 | move to another level / structure | full path, `unwrap` |
+| 3 | alternative names in the source (`x; extWBCSD_x`) | `paths: [a, b]` |
+| 4 | a field that does not exist in the source → empty | `const: null` with `type` |
+| 5 | a dropped field | do not map it |
+| 6 | list of objects → list of values | `list[*].field` |
+| 7 | nested lists flattened | `a[*].b[*].field` |
+| 8 | simple value → list | `type: array<...>` |
+| 9 | one field → several targets, conditionally; sign change | `cases`, `clamp`, `multiply: -1` |
+| 10 | format (e.g. URN with BPN) | `check.regex` |
+| 11 | range (0–100) | `check.min/max` |
+| 12 | closed list of values, old values → new | `map` + `check.in` |
+| 13 | conditionally required ("M if …") | `check.required_if` |
+| 14 | default value | `default` |
+| 15 | several versions in the same table | one submodel per version, the same table `name`, `match.any` by semantic id or `specVersion` |
 
-Com `keys: [id, version]`, um PCF migrado de v7 e o mesmo PCF entregue em v9 ficam **na mesma linha**: ganha o último a ser processado. As regras que alimentam a mesma tabela têm de concordar em `mode`, `keys`, `partition_by`, `replace_by`, `dedupe`, `on_duplicate`, `location`, `metadata_columns` e no tipo (e `rounding`) de cada coluna comum; senão a configuração não carrega (antes valia a 1.ª regra: um `decimal` da 2.ª regra virava `double`). Os exemplos oficiais V7 e V9 têm o mesmo `id`, por isso, para os comparar, corra cada um em separado.
+With `keys: [id, version]`, a PCF migrated from v7 and the same PCF delivered as v9 end up **in the same row**: the last one processed wins. The rules that feed the same table must agree on `mode`, `keys`, `partition_by`, `replace_by`, `dedupe`, `on_duplicate`, `location`, `metadata_columns` and on the type (and `rounding`) of each common column; otherwise the configuration does not load (before, the 1st rule won: a `decimal` from the 2nd rule became `double`). The official V7 and V9 examples have the same `id`, so to compare them, run each one separately.
 
-## Studio: construir transformações sem escrever YAML
+## Studio: build transformations without writing YAML
 
 ```bash
 cx2iceberg studio --root . --open
 ```
 
-Abre em `http://127.0.0.1:8765` uma aplicação local, pensada para quem não conhece o formato da configuração:
+Opens a local application at `http://127.0.0.1:8765`, made for people who do not know the configuration format:
 
-1. **Escolher um submodelo** do catálogo oficial ([eclipse-tractusx/sldt-semantic-models](https://github.com/eclipse-tractusx/sldt-semantic-models)), com as versões e o estado de cada uma (release, deprecated…). O studio descarrega o schema e o exemplo dessa versão para `models/<submodelo>/<versão>/` e cria uma configuração inicial com:
-   * o identificador do documento;
-   * o UUID que liga as tabelas;
-   * a validação contra o schema;
-   * o `unwrap` das listas que no exemplo têm um só elemento.
-2. **Campos do modelo:** todos os campos do schema, com nome legível, descrição, tipo, a marca "obrigatório" e o valor do exemplo. Os campos que o exemplo não traz aparecem também, marcados como "sem valor no exemplo".
-3. **Clicar num campo cria uma coluna.** Cada coluna configura-se em linguagem simples:
-   * nome e tipo;
-   * "se estiver vazio, usar…";
-   * passos: maiúsculas, tirar o prefixo URN, converter unidade, traduzir valores, limitar entre mínimo e máximo…;
-   * validação: obrigatório, mínimo e máximo, valores permitidos, e o que fazer se falhar.
-4. **Listas:**
-   * "Uma linha por elemento" cria uma tabela filha, ligada à principal pelo UUID do documento;
-   * "É sempre um só" ou "Pode ter vários" decide o `unwrap`.
-5. **Resultado em tempo real** sobre os dados de teste: o exemplo oficial, ficheiros da pasta ou um documento colado. Inclui:
-   * a validação contra o schema, com as mensagens em português e o caminho de cada problema;
-   * o **relatório da carga**, o mesmo do `run`: documentos rejeitados (e porquê), perdas declaradas e avisos, contados por tabela, coluna e motivo, com exemplos. As colunas com eventos têm um ● no cabeçalho da grelha. Um documento rejeitado não esconde as linhas dos outros;
-   * a pré-verificação da escrita (a mesma do `--dry-run`), que avisa se a escrita seria bloqueada;
-   * os valores tal como vão ficar na tabela: inteiros grandes e decimais mostrados exactos (antes o browser mostrava `9007199254740993` como `…992`) e um `float` como o Athena o mostra (`1.1`, não `1.100000023841858`).
-6. **Guardar** gera o YAML. Em **Avançado** vê-se e edita-se o YAML, para as regras que o construtor não mostra (`cases`, `template`…). Essas colunas aparecem no construtor como "regra avançada".
+1. **Choose a submodel** from the official catalog ([eclipse-tractusx/sldt-semantic-models](https://github.com/eclipse-tractusx/sldt-semantic-models)), with its versions and the status of each one (release, deprecated…). The studio downloads that version's schema and example to `models/<submodel>/<version>/` and creates an initial configuration with:
+   * the document's identifier;
+   * the UUID that links the tables;
+   * validation against the schema;
+   * the `unwrap` of the lists that have a single element in the example.
+2. **Model fields:** every field of the schema, with a readable name, description, type, the "required" mark and the example's value. Fields the example does not have also appear, marked "no value in the example".
+3. **Clicking a field creates a column.** Each column is set up in plain language:
+   * name and type;
+   * "if empty, use…";
+   * steps: uppercase, remove the URN prefix, convert units, translate values, limit between minimum and maximum…;
+   * validation: required, minimum and maximum, allowed values, and what to do if it fails.
+4. **Lists:**
+   * "One row per element" creates a child table, linked to the main one by the document's UUID;
+   * "Always just one" or "Can have several" decides the `unwrap`.
+5. **Live result** on the test data: the official example, files from the folder or a pasted document. It includes:
+   * validation against the schema, with readable messages and the path of each problem;
+   * the **load report**, the same as `run`'s: rejected documents (and why), declared losses and warnings, counted by table, column and reason, with examples. Columns with events have a ● in the grid's header. A rejected document does not hide the others' rows;
+   * the write pre-check (the same as `--dry-run`'s), which warns if the write would be blocked;
+   * the values as they will be in the table: big integers and decimals shown exactly (before, the browser showed `9007199254740993` as `…992`) and a `float` as Athena shows it (`1.1`, not `1.100000023841858`).
+6. **Save** generates the YAML. Under **Advanced** you can see and edit the YAML, for rules the builder does not show (`cases`, `template`…). Those columns appear in the builder as an "advanced rule".
 
-Sem acesso ao GitHub (proxy, rede fechada), use um clone local do repositório de modelos:
+Without access to GitHub (proxy, closed network), use a local clone of the models repository:
 
 ```bash
 cx2iceberg studio --models-dir ~/code/sldt-semantic-models
 ```
 
-A lista do catálogo vem de uma só chamada à API do GitHub e fica em cache 24 h em `.cx2iceberg/`. Com `GITHUB_TOKEN` definido, usa esse token.
-Ao **Guardar**, o studio confirma que o ficheiro ainda é o que abriu (pelo conteúdo): se foi alterado fora do studio, não grava e pede para recarregar. Antes comparava a data de modificação, que com a mesma marca de tempo (pastas partilhadas com Docker/WSL, sistemas de ficheiros com resolução de 1–2 s, `cp -p`) deixava apagar a edição feita fora.
-O servidor só aceita ligações de `127.0.0.1` e só lê e grava dentro de `--root`. A pré-visualização nunca escreve no Athena.
+The catalog list comes from a single call to the GitHub API and is cached for 24 h in `.cx2iceberg/`. With `GITHUB_TOKEN` set, it uses that token.
+On **Save**, the studio checks that the file is still the one it opened (by its content): if it was changed outside the studio, it does not save and asks you to reload. Before, it compared the modification time, which with the same timestamp (folders shared with Docker/WSL, file systems with 1–2 s resolution, `cp -p`) let it overwrite the edit made outside.
+The server only accepts connections from `127.0.0.1` and only reads and writes inside `--root`. The preview never writes to Athena.
 
-## Validar os documentos contra o schema do modelo
+## Validating the documents against the model's schema
 
 ```yaml
 submodels:
   - name: pcf_v9
     model:
-      schema: ../models/io.catenax.pcf/9.0.0/Pcf-schema.json   # relativo à configuração
+      schema: ../models/io.catenax.pcf/9.0.0/Pcf-schema.json   # relative to the configuration
       example: ../models/io.catenax.pcf/9.0.0/Pcf.json
-    validate: warn        # off | warn (omissão com model) | skip | fail
+    validate: warn        # off | warn (the default with model) | skip | fail
 ```
 
-Cada documento é validado **à entrada**, antes de qualquer regra: tipos, campos obrigatórios, enumerações, formatos (por exemplo o padrão das datas `Timestamp`) e limites. Com `warn` o problema fica no relatório e o documento segue. Com `skip` o documento é ignorado (e contado). Com `fail` o documento é rejeitado.
-À saída, cada coluna com `type:` é convertida para esse tipo, com o `on_error` da coluna, e o `check` acrescenta as regras de negócio. São duas camadas: o schema diz se o documento é válido; o tipo e o `check` dizem se o valor serve para a tabela.
+Each document is validated **on input**, before any rule: types, required fields, enumerations, formats (for example the pattern of `Timestamp` dates) and limits. With `warn` the problem goes into the report and the document goes on. With `skip` the document is ignored (and counted). With `fail` the document is rejected.
+On output, each column with a `type:` is converted to that type, with the column's `on_error`, and the `check` adds the business rules. There are two layers: the schema says whether the document is valid; the type and the `check` say whether the value fits the table.
 
-## Relatório da carga e códigos de saída
+## Load report and exit codes
 
-Nenhum documento é perdido em silêncio. Cada carga produz um relatório com **tabela, coluna, ficheiro, documento** (posição no ficheiro, em listas JSON e JSON Lines), **linha** (posição no `explode`, ex.: `childItems[1]`), **valor**, **o que aconteceu** e **porquê**. Há três tipos de evento:
+No document is silently lost. Each load produces a report with the **table, column, file, document** (position in the file, in JSON lists and JSON Lines), **row** (position in the `explode`, e.g. `childItems[1]`), **value**, **what happened** and **why**. There are three kinds of event:
 
-| Tipo | Quando | Efeito |
+| Kind | When | Effect |
 |---|---|---|
-| erro | valor inválido com `on_error: fail` (omissão), obrigatório vazio, `check` com `on_fail: fail`, ficheiro ilegível ou documento inválido (ver "Leitura dos ficheiros"), `validate: fail`, `unwrap` com vários elementos, chave nula, chave repetida no mesmo documento, condição que compara tipos diferentes, documento sem submodelo, campo do `document_id` em falta, `template` com partes em falta, documento sem o valor do `replace_by` | o **documento é rejeitado**: nenhuma linha dele é escrita, em nenhuma tabela |
-| perda declarada | `on_error: null` / `skip_row`, `default` aplicado, linha excluída pelo `where`, `validate: skip`, `unwrap on_multiple: first`, `missing_elements`, `rounding`, `clamp`, `sum: {nulls: skip}`, `unit_convert` com `from`, `regex_extract` com `no_match: null`, `naive_timestamps`, `on_duplicate`, `template_missing: empty | null`, `auto_collision: skip`, `on_unmatched: skip`, `document_id.on_missing: content`, `missing_columns: null`, `auto_normalize.children: batch` | segue, e fica contado |
-| aviso | campo fora do modelo com `auto_naming: leaf`, `check` com `on_fail: warn`, a mesma chave noutro documento do lote (fica a última), número recebido como texto, texto vazio numa coluna numérica, ficheiro sem documentos, fracção abaixo do microssegundo cortada, coluna sem tipo só com nulos (não criada), coluna nova ou alargada na tabela do Athena | segue, e fica contado |
+| error | an invalid value with `on_error: fail` (the default), an empty required value, a `check` with `on_fail: fail`, an unreadable file or invalid document (see "Reading the files"), `validate: fail`, an `unwrap` with several elements, a null key, a key repeated in the same document, a condition that compares different types, a document without a submodel, a `document_id` field missing, a `template` with missing parts, a document without the `replace_by` value | the **document is rejected**: none of its rows is written, in any table |
+| declared loss | `on_error: null` / `skip_row`, a `default` applied, a row excluded by the `where`, `validate: skip`, `unwrap on_multiple: first`, `missing_elements`, `rounding`, `clamp`, `sum: {nulls: skip}`, `unit_convert` with `from`, `regex_extract` with `no_match: null`, `naive_timestamps`, `on_duplicate`, `template_missing: empty | null`, `auto_collision: skip`, `on_unmatched: skip`, `document_id.on_missing: content`, `missing_columns: null`, `auto_normalize.children: batch` | goes on, and is counted |
+| warning | a field outside the model with `auto_naming: leaf`, a `check` with `on_fail: warn`, the same key in another document of the batch (the last one is kept), a number received as text, empty text in a numeric column, a file without documents, a fraction below the microsecond truncated, an untyped column with only nulls (not created), a new or widened column in the Athena table | goes on, and is counted |
 
-A pré-verificação da escrita (ver "Escrita") não é um erro de um documento: pára a carga inteira antes de escrever (no relatório: `failure` com os problemas e todas as tabelas `not_written`; código de saída `1`).
+The write pre-check (see "Writing") is not an error of one document: it stops the whole load before writing (in the report: `failure` with the problems and every table `not_written`; exit code `1`).
 
-Os erros não param no primeiro: a carga percorre todos os documentos e mostra todos os erros de uma vez. Um documento rejeitado não trava os outros: num lote com ficheiros de vários parceiros, os válidos são escritos e o relatório diz quais os ficheiros a pedir de novo.
+Errors do not stop at the first one: the load goes through every document and shows every error at once. A rejected document does not hold up the others: in a batch with files from several partners, the valid ones are written and the report says which files to ask for again.
 
 ```bash
-cx2iceberg run -c config.yaml dados/ --report relatorio.json --report-details eventos.jsonl
+cx2iceberg run -c config.yaml data/ --report report.json --report-details events.jsonl
 ```
 
-| Opção | |
+| Option | |
 |---|---|
-| `--report FICHEIRO` | relatório em JSON: contagens exactas por tabela/coluna/motivo e os primeiros exemplos de cada |
-| `--report-details FICHEIRO` | todos os eventos, um por linha, escritos à medida (não ficam em memória) |
-| `--samples N` | exemplos guardados por grupo (omissão 20) |
-| `--max-errors N` | ao fim de N erros a carga pára e nada é escrito (omissão 1000) |
+| `--report FILE` | report as JSON: exact counts per table/column/reason and the first examples of each |
+| `--report-details FILE` | every event, one per line, written as it goes (not kept in memory) |
+| `--samples N` | examples kept per group (default 20) |
+| `--max-errors N` | after N errors the load stops and nothing is written (default 1000) |
 
-Em memória ficam só as contagens (uma por tabela/coluna/motivo, o que depende da configuração e não dos dados) e os primeiros exemplos de cada grupo; os valores são cortados a 200 caracteres. No log aparecem só esses exemplos, não um aviso por valor. Por linha, o relatório guarda apenas de que documento e de que posição do `explode` ela veio (cerca de 18 bytes), para poder retirar as linhas de um documento rejeitado e dizer de onde vem um duplicado.
+Only the counts (one per table/column/reason, which depends on the configuration and not on the data) and the first examples of each group are kept in memory; values are cut at 200 characters. The log only shows those examples, not one warning per value. Per row, the report only keeps which document and which `explode` position it came from (about 18 bytes), to be able to remove a rejected document's rows and say where a duplicate comes from.
 
-O relatório é gravado **no fim**, com o resultado da escrita de cada tabela: `written` (escrita), `failed` (com o erro), `not_written` (não chegou a ser escrita por causa de uma falha anterior), `empty` (sem linhas) ou `interrupted` (a carga foi interrompida a meio; estado desconhecido). Se uma tabela com `replace_by` falhar depois do `DELETE`, o relatório diz que as linhas antigas desses ids já foram apagadas. Com `--dry-run`, `write` é `null`.
+The report is saved **at the end**, with the write result of each table: `written`, `failed` (with the error), `not_written` (it was not written because of an earlier failure), `empty` (no rows) or `interrupted` (the load was interrupted midway; state unknown). If a table with `replace_by` fails after the `DELETE`, the report says that the old rows of those ids were already deleted. With `--dry-run`, `write` is `null`.
 
-**Códigos de saída** de `run` e `ddl`: `0` tudo bem (pode haver perdas declaradas e avisos); `2` carga parcial: documentos rejeitados, os restantes foram escritos (ou, com `--dry-run`, nada foi escrito); `1` falha (configuração, `--max-errors`, escrita): o relatório diz que tabelas ficaram escritas e qual falhou.
+**Exit codes** of `run` and `ddl`: `0` all good (there may be declared losses and warnings); `2` partial load: documents rejected, the others were written (or, with `--dry-run`, nothing was written); `1` failure (configuration, `--max-errors`, write): the report says which tables were written and which one failed.
 
 ## AWS Lambda
 
-`cx2iceberg.lambda_handler.handler` processa eventos S3 (ex.: payloads do EDC gravados num bucket). Defina `CX2ICEBERG_CONFIG` (caminho no pacote ou `s3://…/config.yaml`).
+`cx2iceberg.lambda_handler.handler` processes S3 events (e.g. EDC payloads stored in a bucket). Set `CX2ICEBERG_CONFIG` (a path in the package or `s3://…/config.yaml`).
 
-É **tudo ou nada por invocação**: se algum documento do evento for rejeitado, nada é escrito, o relatório vai para o log e a invocação falha. Assim, uma nova tentativa não duplica linhas já escritas. Configure `MaximumRetryAttempts=0` e um destino *on-failure* (ou DLQ): repetir não corrige erros nos dados e, sem destino, a AWS descarta o evento depois das tentativas. Com sucesso devolve `{"status", "written", "report"}`, em JSON estrito. O `report` da resposta tem só as contagens (sem exemplos) e o resultado da escrita, para caber nos limites da AWS; o relatório completo vai para o log (com nível `WARNING` quando tem avisos ou perdas declaradas, porque o nível por omissão da Lambda esconde o `INFO`). Se a escrita falhar, o log diz que tabelas ficaram escritas e qual falhou.
+It is **all or nothing per invocation**: if any document of the event is rejected, nothing is written, the report goes to the log and the invocation fails. That way, a retry does not duplicate rows already written. Configure `MaximumRetryAttempts=0` and an *on-failure* destination (or DLQ): retrying does not fix errors in the data and, without a destination, AWS discards the event after the attempts. On success it returns `{"status", "written", "report"}`, as strict JSON. The response's `report` only has the counts (no examples) and the write result, to fit within AWS limits; the full report goes to the log (at `WARNING` level when it has warnings or declared losses, because Lambda's default level hides `INFO`). If the write fails, the log says which tables were written and which one failed.
 
-Depois da escrita nada pode falhar: a resposta é construída e validada **antes** de escrever. Uma falha depois da escrita deixaria os dados escritos com a invocação marcada como falhada: a AWS repetiria (linhas duplicadas nas tabelas `append`) ou mandaria o evento para o destino *on-failure*, e reprocessá-lo duplicaria as linhas outra vez. Uma falha **durante** a escrita (ex.: Athena falha na 2.ª tabela) continua a deixar as tabelas anteriores escritas: por isso `MaximumRetryAttempts=0`. Permissões necessárias: `athena:StartQueryExecution/GetQueryExecution/GetQueryResults`, `glue:Get*/CreateTable/UpdateTable/CreateDatabase`, e `s3:GetObject/PutObject/DeleteObject/ListBucket` nos buckets de entrada, `location` e `temp_path`.
+After the write nothing can fail: the response is built and validated **before** writing. A failure after the write would leave the data written with the invocation marked as failed: AWS would retry (duplicate rows in `append` tables) or send the event to the *on-failure* destination, and reprocessing it would duplicate the rows again. A failure **during** the write (e.g. Athena fails on the 2nd table) still leaves the earlier tables written: hence `MaximumRetryAttempts=0`. Permissions needed: `athena:StartQueryExecution/GetQueryExecution/GetQueryResults`, `glue:Get*/CreateTable/UpdateTable/CreateDatabase`, and `s3:GetObject/PutObject/DeleteObject/ListBucket` on the input, `location` and `temp_path` buckets.
 
-## Uso programático
+## Programmatic use
 
 ```python
 from cx2iceberg import load_config, transform, write_athena
 
 cfg = load_config("config.yaml")
-results = transform(cfg, ["dados/"], semantic_id="urn:samm:io.catenax.serial_part:3.0.0#SerialPart")
+results = transform(cfg, ["data/"], semantic_id="urn:samm:io.catenax.serial_part:3.0.0#SerialPart")
 write_athena(cfg, results)
 ```
 
-`transform` lança `DocumentsRejected` se algum documento tiver erros (com `.report` e `.results`). Para escrever só os documentos válidos:
+`transform` raises `DocumentsRejected` if any document has errors (with `.report` and `.results`). To write only the valid documents:
 
 ```python
 from cx2iceberg import Engine, read_documents
 
 engine = Engine(cfg)
-results = engine.run(list(read_documents(["dados/"], cfg.input)), partial=True)
-print(engine.report.render())        # ou engine.report.to_dict()
+results = engine.run(list(read_documents(["data/"], cfg.input)), partial=True)
+print(engine.report.render())        # or engine.report.to_dict()
 ```
 
-## Limitações
+## Limitations
 
-* Lê o formato **value-only** dos submodelos Catena-X. O formato AAS completo (`submodelElements`) não é convertido.
-* O schema SAMM não diz quais listas são 1:1 (não tem `maxItems`), por isso o `unwrap` é uma decisão sua; a carga falha se a decisão estiver errada para um documento.
-* `replace_by` executa `DELETE` e depois `INSERT`: não é atómico (a pré-verificação reduz, mas não elimina, o risco de falhar entre os dois; se falhar, o relatório diz que o `DELETE` já foi feito).
-* `merge` nunca apaga: uma linha que deixa de ser produzida (ex.: um filho retirado do BOM) fica na tabela. Para listas que podem encolher use `append` + `replace_by`.
-* A pré-verificação compara tipos de colunas; mudanças na especificação de partições de uma tabela já existente não são detectadas.
-* Processa os documentos em memória. Para volumes muito grandes, chame-o por lotes (ex.: um ficheiro ou prefixo S3 por execução).
+* It reads the **value-only** format of Catena-X submodels. The full AAS format (`submodelElements`) is not converted.
+* The SAMM schema does not say which lists are 1:1 (it has no `maxItems`), so the `unwrap` is your decision; the load fails if the decision is wrong for a document.
+* `replace_by` runs a `DELETE` and then an `INSERT`: it is not atomic (the pre-check reduces, but does not remove, the risk of failing between the two; if it fails, the report says the `DELETE` was already done).
+* `merge` never deletes: a row that is no longer produced (e.g. a child removed from the BOM) stays in the table. For lists that can shrink use `append` + `replace_by`.
+* The pre-check compares column types; changes to the partition spec of an existing table are not detected.
+* It processes the documents in memory. For very large volumes, call it in batches (e.g. one file or S3 prefix per run).
 
-## Testes
+## Tests
 
 ```bash
 pip install -e ".[dev]" && pytest
 ```
 
-## Licença
+## License
 
-O código é distribuído sob a licença [Apache-2.0](LICENSE). Os schemas e alguns exemplos em `examples/` vêm do projeto Eclipse Tractus-X e mantêm a licença CC-BY-4.0; ver [NOTICE.md](NOTICE.md).
+The code is distributed under the [Apache-2.0](LICENSE) license. The schemas and some examples in `examples/` come from the Eclipse Tractus-X project and keep the CC-BY-4.0 license; see [NOTICE.md](NOTICE.md).

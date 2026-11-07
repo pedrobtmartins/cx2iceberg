@@ -1,11 +1,11 @@
-"""Tipos Athena/Iceberg: parsing, inferência e cast de valores Python.
+"""Athena/Iceberg types: parsing, inference and casting of Python values.
 
-Tipos suportados (aninháveis):
+Supported types (nestable):
     string int bigint smallint tinyint double float boolean timestamp date json decimal(p,s)
-    array<T>  map<K,V>  struct<campo:T, ...>
+    array<T>  map<K,V>  struct<field:T, ...>
 
-`struct` e `array<struct>` sem campos significam "inferir a estrutura a partir dos dados".
-`json` é gravado como string (objecto serializado).
+`struct` and `array<struct>` without fields mean "infer the structure from the data".
+`json` is stored as a string (a serialized object).
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .numbers import ASCII_SPACE, MODES, NumberError, to_decimal, to_float
 from .values import json_text, text_of
 
 INT_BITS = {"tinyint": 8, "smallint": 16, "int": 32, "bigint": 64}
-MAX_DECIMAL_PRECISION = 38   # limite do Athena/Iceberg
+MAX_DECIMAL_PRECISION = 38   # Athena/Iceberg limit
 
 ALIASES = {
     "str": "string", "text": "string", "varchar": "string",
@@ -29,12 +29,12 @@ ALIASES = {
     "bool": "boolean", "datetime": "timestamp",
 }
 SIMPLE = {"string", "int", "bigint", "smallint", "tinyint", "double", "float", "boolean", "timestamp", "date", "json"}
-INFER_STRUCT = ("struct", ())  # struct sem campos = inferir
+INFER_STRUCT = ("struct", ())  # struct without fields = infer
 
-# data/hora no formato do schema (xsd:dateTime): só estes textos são detectados como datas no modo auto
+# date/time in the schema's format (xsd:dateTime): only these texts are detected as dates in auto mode
 ISO_DATETIME = re.compile("^" + dates.DATETIME_RE.pattern + "$", re.ASCII)
 
-# Árvore de tipo: str (simples) | ("decimal", p, s) | ("array", T) | ("map", K, V) | ("struct", ((nome, T), ...))
+# Type tree: str (simple) | ("decimal", p, s) | ("array", T) | ("map", K, V) | ("struct", ((name, T), ...))
 Tree = Union[str, tuple]
 
 
@@ -57,7 +57,7 @@ def _split_top(s: str) -> list[str]:
 
 @lru_cache(maxsize=2048)
 def parse(t: str) -> Tree:
-    from .config import sanitize  # evitar import circular
+    from .config import sanitize  # avoids a circular import
 
     s = str(t).strip()
     low = s.lower().replace(" ", "")
@@ -70,7 +70,7 @@ def parse(t: str) -> Tree:
     if m:
         p, sc = int(m.group(1)), int(m.group(2))
         if not 1 <= p <= MAX_DECIMAL_PRECISION or sc > p:
-            raise ValueError(f"'{t}': a precisão tem de estar entre 1 e {MAX_DECIMAL_PRECISION} e a escala não pode ser maior")
+            raise ValueError(f"'{t}': the precision must be between 1 and {MAX_DECIMAL_PRECISION} and the scale cannot be larger")
         return ("decimal", p, sc)
     m = re.fullmatch(r"(?i)array\s*<(.+)>", s)
     if m:
@@ -79,27 +79,27 @@ def parse(t: str) -> Tree:
     if m:
         kv = _split_top(m.group(1))
         if len(kv) != 2:
-            raise ValueError(f"map inválido: '{t}'")
+            raise ValueError(f"invalid map: '{t}'")
         return ("map", parse(kv[0]), parse(kv[1]))
     m = re.fullmatch(r"(?i)struct\s*<(.*)>", s)
     if m:
         fields = []
         for f in _split_top(m.group(1)):
             if ":" not in f:
-                raise ValueError(f"campo de struct sem tipo: '{f}' em '{t}'")
+                raise ValueError(f"struct field without a type: '{f}' in '{t}'")
             name, ft = f.split(":", 1)
             fields.append((sanitize(name.strip()), parse(ft)))
         return ("struct", tuple(fields))
-    raise ValueError(f"Tipo não suportado: '{t}'")
+    raise ValueError(f"Unsupported type: '{t}'")
 
 
-# O Iceberg não tem inteiros de 8/16 bits (só int e long): na tabela, tinyint/smallint são int. O tipo declarado
-# continua a validar o intervalo de cada valor no cast (300 num tinyint é erro), por isso nada muda nos valores.
+# Iceberg has no 8/16-bit integers (only int and long): in the table, tinyint/smallint are int. The declared type
+# still validates each value's range in the cast (300 in a tinyint is an error), so nothing changes in the values.
 _PHYSICAL = {"json": "string", "tinyint": "int", "smallint": "int"}
 
 
 def render(tree: Tree, ddl: bool = False) -> str:
-    """Árvore -> texto. Com ddl=True, o tipo físico da tabela Iceberg: json -> string, tinyint/smallint -> int."""
+    """Tree -> text. With ddl=True, the Iceberg table's physical type: json -> string, tinyint/smallint -> int."""
     if isinstance(tree, str):
         return _PHYSICAL.get(tree, tree) if ddl else tree
     kind = tree[0]
@@ -129,16 +129,16 @@ def needs_inference(t: str) -> bool:
     return tree == INFER_STRUCT
 
 
-# --- inferência ----------------------------------------------------------
+# --- inference ----------------------------------------------------------
 def infer(value: Any) -> str | None:
-    """Tipo plano de uma coluna (objectos -> json)."""
+    """Flat type of a column (objects -> json)."""
     if value is None:
         return None
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, (int, float, Decimal)):
-        # JSON não distingue 1 de 1.0 e o Iceberg não promove bigint -> double:
-        # sem tipo explícito, números são sempre double.
+        # JSON does not tell 1 from 1.0 and Iceberg does not promote bigint -> double:
+        # without an explicit type, numbers are always double.
         return "double"
     if isinstance(value, datetime):
         return "timestamp"
@@ -155,7 +155,7 @@ def infer(value: Any) -> str | None:
 
 
 def widen(a: str | None, b: str | None) -> str | None:
-    """Combina dois tipos planos inferidos para a mesma coluna."""
+    """Combines two flat types inferred for the same column."""
     if a is None or a == b:
         return b if a is None else a
     if b is None:
@@ -166,12 +166,12 @@ def widen(a: str | None, b: str | None) -> str | None:
 
 
 def infer_deep(value: Any) -> Tree | None:
-    """Tipo completo (struct/array aninhados). None = desconhecido (só nulos/listas vazias)."""
+    """Full type (nested struct/array). None = unknown (only nulls/empty lists)."""
     from .config import sanitize
 
     if value is None:
         return None
-    declared = getattr(value, "athena_type", None)  # folha de um esqueleto SAMM (samm.Typed)
+    declared = getattr(value, "athena_type", None)  # leaf of a SAMM skeleton (samm.Typed)
     if declared:
         return parse(declared)
     if isinstance(value, dict):
@@ -210,7 +210,7 @@ def merge(a: Tree | None, b: Tree | None) -> Tree | None:
 
 
 def complete(tree: Tree | None) -> Tree:
-    """Substitui desconhecidos por string e structs vazios por json (o Athena não aceita struct<>)."""
+    """Replaces unknowns with string and empty structs with json (Athena does not accept struct<>)."""
     if tree is None:
         return "string"
     if isinstance(tree, tuple):
@@ -227,8 +227,8 @@ def complete(tree: Tree | None) -> Tree:
 
 # --- cast ----------------------------------------------------------------
 def cast(value: Any, t: str, rounding: str | None = None) -> Any:
-    """Converte para o tipo. `rounding` (da coluna): modo de arredondamento para decimal (half_up, ...) ou
-    'nearest' para double/float; sem ele, um valor que não caiba exactamente dá erro."""
+    """Converts to the type. `rounding` (from the column): rounding mode for decimal (half_up, ...) or
+    'nearest' for double/float; without it, a value that does not fit exactly is an error."""
     return _cast(value, parse(t), rounding)
 
 
@@ -246,24 +246,24 @@ def _cast(value: Any, t: Tree, rounding: str | None = None) -> Any:
             return [_cast(v, t[1], rounding) for v in items]
         if kind == "map":
             if not isinstance(value, dict):
-                raise ValueError(f"esperado objecto para {render(t)}, recebido {type(value).__name__}")
+                raise ValueError(f"expected an object for {render(t)}, got {type(value).__name__}")
             out: dict = {}
             for k, v in value.items():
                 ck = _cast(k, t[1], rounding)
                 if ck in out:
-                    raise ValueError(f"as chaves {k!r} e outra dão a mesma chave {ck!r} em {render(t)}")
+                    raise ValueError(f"keys {k!r} and another one give the same key {ck!r} in {render(t)}")
                 out[ck] = _cast(v, t[2], rounding)
             return out
         if kind == "struct":
             return _cast_struct(value, t, rounding)
     if t == "json":
         if isinstance(value, str):
-            from .reader import loads  # noqa: PLC0415 - evitar import circular
+            from .reader import loads  # noqa: PLC0415 - avoids a circular import
 
             try:
-                loads(value)              # texto já em JSON (ex.: to_json): tem de ser JSON válido
+                loads(value)              # text already in JSON (e.g. to_json): it must be valid JSON
             except ValueError as e:
-                raise ValueError(f"{value[:80]!r} não é JSON ({e}); para guardar texto use type: string") from None
+                raise ValueError(f"{value[:80]!r} is not JSON ({e}); to store text use type: string") from None
             return value
         return json_text(value)
     if t == "string":
@@ -271,12 +271,12 @@ def _cast(value: Any, t: Tree, rounding: str | None = None) -> Any:
     if value == "" or (t in NUMERIC and _blank(value)):
         return None
     if t in INT_BITS:
-        d = to_decimal(value)                # número do documento: texto original (12345678901234567890.0 fica exacto)
+        d = to_decimal(value)                # a document number: the original text (12345678901234567890.0 stays exact)
         if not d.is_finite() or d != d.to_integral_value():
-            raise ValueError(f"'{value}' não é inteiro (use type: double ou decimal)")
+            raise ValueError(f"'{value}' is not an integer (use type: double or decimal)")
         bits = INT_BITS[t]
         if not -(2 ** (bits - 1)) <= d < 2 ** (bits - 1):
-            raise ValueError(f"{int(d)} não cabe em {t} ({bits} bits: de {-(2 ** (bits - 1))} a {2 ** (bits - 1) - 1})")
+            raise ValueError(f"{int(d)} does not fit in {t} ({bits} bits: from {-(2 ** (bits - 1))} to {2 ** (bits - 1) - 1})")
         return int(d)
     if t in ("double", "float"):
         return to_float(value, rounding, single=t == "float")
@@ -288,31 +288,31 @@ def _cast(value: Any, t: Tree, rounding: str | None = None) -> Any:
             return True
         if s in ("false", "0", "no"):
             return False
-        raise ValueError(f"'{value}' não é booleano")
+        raise ValueError(f"'{value}' is not a boolean")
     if t == "timestamp":
         return dates.to_timestamp(value)
     if t == "date":
         return dates.to_date(value)
-    raise ValueError(f"Tipo não suportado: {t}")
+    raise ValueError(f"Unsupported type: {t}")
 
 
 def _decimal(value: Any, p: int, sc: int, rounding: str | None) -> Decimal:
-    d = to_decimal(value)                    # número do documento: texto original (exacto)
+    d = to_decimal(value)                    # a document number: the original text (exact)
     if not d.is_finite():
-        raise NumberError(f"{value!r} não é um número finito")
+        raise NumberError(f"{value!r} is not a finite number")
     with localcontext() as ctx:
-        ctx.prec = 2 * MAX_DECIMAL_PRECISION + 4   # a precisão por omissão (28) é menor do que decimal(38, …)
+        ctx.prec = 2 * MAX_DECIMAL_PRECISION + 4   # the default precision (28) is lower than decimal(38, …)
         try:
             q = d.quantize(Decimal(1).scaleb(-sc), rounding=MODES.get(rounding or "half_even"))
         except InvalidOperation:
-            raise ValueError(f"{d} não cabe em decimal({p},{sc})") from None
+            raise ValueError(f"{d} does not fit in decimal({p},{sc})") from None
     if q != d:
         if rounding is None:
-            raise ValueError(f"{d} tem mais de {sc} casa(s) decimal(is) para decimal({p},{sc}); declare "
-                             f"rounding (ex.: half_up) na coluna para arredondar")
-        note("declared", "rounded", "rounded", f"{d} arredondado para {q} ({rounding})")
+            raise ValueError(f"{d} has more than {sc} decimal place(s) for decimal({p},{sc}); declare "
+                             f"rounding (e.g. half_up) on the column to round it")
+        note("declared", "rounded", "rounded", f"{d} rounded to {q} ({rounding})")
     if abs(q) >= Decimal(10) ** (p - sc):
-        raise ValueError(f"{d} não cabe em decimal({p},{sc}) (máximo {p - sc} algarismo(s) antes da vírgula)")
+        raise ValueError(f"{d} does not fit in decimal({p},{sc}) (at most {p - sc} digit(s) before the decimal point)")
     return q
 
 
@@ -320,7 +320,7 @@ NUMERIC = {"int", "bigint", "smallint", "tinyint", "double", "float"}
 
 
 def _blank(value: Any) -> bool:
-    """Texto vazio (ou só espaços ASCII) numa coluna numérica conta como nulo (e o motor regista-o)."""
+    """Empty text (or only ASCII spaces) in a numeric column counts as null (and the engine records it)."""
     return isinstance(value, str) and not value.strip(ASCII_SPACE)
 
 
@@ -330,18 +330,18 @@ def _cast_struct(value: Any, t: Tree, rounding: str | None = None) -> dict | Non
 
     if isinstance(value, str):
         value = loads(value)
-    if isinstance(value, list):  # lista 1:1 tratada como objecto
+    if isinstance(value, list):  # a 1:1 list treated as an object
         if not value:
             return None
         if len(value) > 1:
-            raise ValueError(f"esperado 1 objecto para struct, recebidos {len(value)}")
+            raise ValueError(f"expected 1 object for struct, got {len(value)}")
         value = value[0]
     if not isinstance(value, dict):
-        raise ValueError(f"esperado objecto para struct, recebido {type(value).__name__}")
+        raise ValueError(f"expected an object for struct, got {type(value).__name__}")
     by_name: dict[str, Any] = {}
     for k, v in value.items():
         n = sanitize(k)
         if n in by_name:
-            raise ValueError(f"os campos {k!r} e {by_name[n][0]!r} dão o mesmo nome {n!r} no struct")
+            raise ValueError(f"fields {k!r} and {by_name[n][0]!r} give the same name {n!r} in the struct")
         by_name[n] = (k, v)
     return {n: _cast(value[n] if n in value else by_name.get(n, (None, None))[1], ft, rounding) for n, ft in t[1]}

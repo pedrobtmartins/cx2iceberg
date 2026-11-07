@@ -1,21 +1,21 @@
-"""Leitura de submodelos: ficheiros, pastas, JSON Lines e S3.
+"""Reading submodels: files, folders, JSON Lines and S3.
 
-Opções em `input:` na configuração:
+Options under `input:` in the configuration:
 
     input:
-      semantic_id: urn:samm:io.catenax.serial_part:3.0.0#SerialPart  # fixo para todos
-      semantic_id_map:                       # ou por padrão de nome de ficheiro
+      semantic_id: urn:samm:io.catenax.serial_part:3.0.0#SerialPart  # fixed for all
+      semantic_id_map:                       # or by file name pattern
         "*serial*": urn:samm:io.catenax.serial_part:3.0.0#SerialPart
-      envelope:                              # quando o JSON vem embrulhado
+      envelope:                              # when the JSON comes wrapped
         payload_path: payload
         semantic_id_path: semanticId
-      list_is_document: false                # true: um JSON que é lista = 1 documento
-      match_all: false                       # true: um documento pode alimentar vários submodelos
+      list_is_document: false                # true: a JSON that is a list = 1 document
+      match_all: false                       # true: a document can feed several submodels
 
-Um ficheiro que não se consegue ler não pára a carga: vira um documento rejeitado (com a razão) e os
-restantes seguem. Em JSON Lines, a unidade é a linha. Não se adivinha a codificação: só UTF-8 (com ou sem
-BOM). O JSON é lido em modo estrito: sem NaN/Infinity, sem chaves repetidas, sem números que o double não
-representa (1e400, 1e-400); os floats guardam o texto original (ver numbers.JsonFloat).
+A file that cannot be read does not stop the load: it becomes a rejected document (with the reason) and the
+others go on. In JSON Lines, the unit is the line. The encoding is not guessed: UTF-8 only (with or without a
+BOM). The JSON is read in strict mode: no NaN/Infinity, no repeated keys, no numbers the double cannot
+represent (1e400, 1e-400); floats keep the original text (see numbers.JsonFloat).
 """
 from __future__ import annotations
 
@@ -33,12 +33,12 @@ _EXT = (".json", ".jsonl", ".ndjson")
 
 
 class ReadError(ValueError):
-    """O conteúdo não pode ser lido sem perder ou adivinhar informação."""
+    """The content cannot be read without losing or guessing information."""
 
 
-# --- JSON estrito --------------------------------------------------------------
+# --- strict JSON --------------------------------------------------------------
 def _reject_constant(name: str):
-    raise ReadError(f"{name} não é JSON válido (número não finito)")
+    raise ReadError(f"{name} is not valid JSON (non-finite number)")
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict:
@@ -47,31 +47,31 @@ def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict:
         seen: dict[str, Any] = {}
         for k, v in pairs:
             if k in seen:
-                raise ReadError(f"chave repetida {k!r} no mesmo objecto (valores {short_value(seen[k])} e "
-                                f"{short_value(v)}): não se escolhe um deles")
+                raise ReadError(f"repeated key {k!r} in the same object (values {short_value(seen[k])} and "
+                                f"{short_value(v)}): neither is picked")
             seen[k] = v
     return out
 
 
 def loads(text: str) -> Any:
-    """json.loads estrito (ver docstring do módulo). Lança ReadError/ValueError com a razão em português."""
+    """Strict json.loads (see the module docstring). Raises ReadError/ValueError with the reason."""
     try:
         return json.loads(text, parse_float=json_float, parse_constant=_reject_constant, object_pairs_hook=_no_duplicates)
     except json.JSONDecodeError as e:
         hint = ""
         if e.msg == "Extra data":
-            hint = " (há mais de um documento JSON no ficheiro: para um por linha use a extensão .jsonl)"
+            hint = " (there is more than one JSON document in the file: for one per line use the .jsonl extension)"
         elif "\x00" in text:
-            hint = " (o texto tem caracteres NUL: parece UTF-16 sem BOM; converta para UTF-8)"
-        raise ReadError(f"JSON inválido: {e}{hint}") from None
+            hint = " (the text has NUL characters: it looks like UTF-16 without a BOM; convert it to UTF-8)"
+        raise ReadError(f"Invalid JSON: {e}{hint}") from None
     except RecursionError:
-        raise ReadError("JSON demasiado aninhado") from None
+        raise ReadError("JSON nested too deeply") from None
     except ReadError:
         raise
-    except ValueError as e:  # ex.: NumberError do json_float, inteiro com mais de 4300 dígitos
+    except ValueError as e:  # e.g. NumberError from json_float, an integer with more than 4300 digits
         if "Exceeds the limit" in str(e):
-            raise ReadError("JSON inválido: número inteiro com mais de 4300 dígitos") from None
-        raise ReadError(f"JSON inválido: {e}") from None
+            raise ReadError("Invalid JSON: integer with more than 4300 digits") from None
+        raise ReadError(f"Invalid JSON: {e}") from None
 
 
 def _decode(raw: bytes, bom: bool = True) -> str:
@@ -79,16 +79,16 @@ def _decode(raw: bytes, bom: bool = True) -> str:
         return raw.decode("utf-8-sig" if bom else "utf-8")
     except UnicodeDecodeError as e:
         if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
-            hint = "parece UTF-16"
+            hint = "looks like UTF-16"
         else:
-            hint = "talvez Latin-1/Windows-1252"
-        raise ReadError(f"não é UTF-8 válido: byte 0x{raw[e.start]:02x} na posição {e.start} ({hint}); "
-                        f"converta o ficheiro para UTF-8 — a codificação não é adivinhada") from None
+            hint = "maybe Latin-1/Windows-1252"
+        raise ReadError(f"not valid UTF-8: byte 0x{raw[e.start]:02x} at position {e.start} ({hint}); "
+                        f"convert the file to UTF-8 — the encoding is not guessed") from None
 
 
-# --- origens -------------------------------------------------------------------
+# --- sources -------------------------------------------------------------------
 def _s3_objects(uri: str, session=None) -> Iterator[tuple[str, bytes | None, str | None]]:
-    if session is None:                 # com uma sessão dada, o boto3 não é preciso
+    if session is None:                 # with a given session, boto3 is not needed
         import boto3
 
         session = boto3.Session()
@@ -99,8 +99,8 @@ def _s3_objects(uri: str, session=None) -> Iterator[tuple[str, bytes | None, str
         name = f"s3://{bucket}/{key}"
         try:
             return name, s3.get_object(Bucket=bucket, Key=key)["Body"].read(), None
-        except Exception as e:  # noqa: BLE001 - um objecto ilegível não pára os outros
-            return name, None, f"não foi possível ler o objecto: {e}"
+        except Exception as e:  # noqa: BLE001 - an unreadable object does not stop the others
+            return name, None, f"could not read the object: {e}"
 
     if prefix.endswith(_EXT):
         yield get(prefix)
@@ -116,11 +116,11 @@ def _local_files(p: Path) -> Iterator[tuple[str, bytes | None, str | None]]:
     for f in files:
         try:
             yield str(f), f.read_bytes(), None
-        except OSError as e:  # permissões, ficheiro apagado entretanto...
-            yield str(f), None, f"não foi possível ler o ficheiro: {e}"
+        except OSError as e:  # permissions, file deleted in the meantime...
+            yield str(f), None, f"could not read the file: {e}"
 
 
-# --- documentos ----------------------------------------------------------------
+# --- documents ----------------------------------------------------------------
 def read_documents(sources: list[str], opts: dict | None = None, semantic_id: str | None = None, session=None) -> Iterator[Document]:
     opts = opts or {}
     env = opts.get("envelope") or {}
@@ -143,20 +143,20 @@ def _file_documents(raw: bytes, name: str, env: dict, fixed: str | None, sid_map
 
     if name.endswith((".jsonl", ".ndjson")):
         n = 0
-        # separa em bytes por '\n': cada linha é descodificada sozinha (uma linha má não estraga as outras) e um
-        # U+2028 dentro de um texto não parte a linha (str.splitlines partiria)
+        # split in bytes on '\n': each line is decoded on its own (a bad line does not spoil the others) and a
+        # U+2028 inside a text does not split the line (str.splitlines would)
         for lineno, line in enumerate(raw.split(b"\n"), 1):
             if not line.strip():
                 continue
             try:
                 item = loads(_decode(line, bom=lineno == 1))
             except ReadError as e:
-                yield Document(None, name, fixed, index=n, error=f"linha {lineno}: {e}")
+                yield Document(None, name, fixed, index=n, error=f"line {lineno}: {e}")
             else:
                 yield make(item, n)
             n += 1
         if n == 0:
-            yield Document(None, name, fixed, notice="ficheiro sem documentos")
+            yield Document(None, name, fixed, notice="file without documents")
         return
     try:
         data = loads(_decode(raw))
@@ -165,7 +165,7 @@ def _file_documents(raw: bytes, name: str, env: dict, fixed: str | None, sid_map
         return
     if isinstance(data, list) and not list_is_document:
         if not data:
-            yield Document(None, name, fixed, notice="ficheiro sem documentos (lista vazia)")
+            yield Document(None, name, fixed, notice="file without documents (empty list)")
         for i, item in enumerate(data):
             yield make(item, i)
     else:
@@ -176,7 +176,7 @@ def _document(item: Any, name: str, env: dict, fixed: str | None, sid_map: dict,
               list_ok: bool = False) -> Document:
     sid = fixed
     if not isinstance(item, dict) and not (list_ok and isinstance(item, list)):
-        return Document(None, name, fixed, index=index, error=f"o documento não é um objecto JSON (é {_kind(item)})")
+        return Document(None, name, fixed, index=index, error=f"the document is not a JSON object (it is {_kind(item)})")
     if env:
         try:
             return _envelope(item, name, env, sid, sid_map, index)
@@ -193,10 +193,10 @@ def _envelope(item: Any, name: str, env: dict, sid: str | None, sid_map: dict, i
     if env.get("payload_path"):
         v = resolve_obj(item, env["payload_path"])
         if v is MISSING or v is None:
-            return Document(None, name, sid, index=index, error=f"envelope sem payload em '{env['payload_path']}'")
+            return Document(None, name, sid, index=index, error=f"envelope without a payload at '{env['payload_path']}'")
         if not isinstance(v, dict):
             return Document(None, name, sid, index=index,
-                            error=f"o payload em '{env['payload_path']}' não é um objecto JSON (é {_kind(v)})")
+                            error=f"the payload at '{env['payload_path']}' is not a JSON object (it is {_kind(v)})")
         payload = v
     return _with_semantic_id(Document(payload, name, sid, index=index), sid_map)
 
@@ -210,5 +210,5 @@ def _with_semantic_id(doc: Document, sid_map: dict) -> Document:
 
 
 def _kind(v: Any) -> str:
-    return {type(None): "null", bool: "booleano", str: "texto", list: "lista", dict: "objecto"}.get(
-        type(v), "número" if isinstance(v, (int, float)) else type(v).__name__)
+    return {type(None): "null", bool: "boolean", str: "text", list: "list", dict: "object"}.get(
+        type(v), "number" if isinstance(v, (int, float)) else type(v).__name__)

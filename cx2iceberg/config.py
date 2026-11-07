@@ -1,4 +1,4 @@
-"""Leitura e validação da configuração YAML."""
+"""Reading and validating the YAML configuration."""
 from __future__ import annotations
 
 import importlib
@@ -27,22 +27,22 @@ class ConfigError(ValueError):
 class ColumnSpec:
     name: str
     path: str | None = None
-    paths: list[str] | None = None          # coalesce: primeiro não-nulo
+    paths: list[str] | None = None          # coalesce: first non-null
     template: str | None = None             # "{$root.catenaXId}-{key}"
     const: Any = None
     has_const: bool = False
-    type: str | None = None                 # None = inferido
+    type: str | None = None                 # None = inferred
     transform: Any = None
     default: Any = None
     required: bool = False
     on_error: str | None = None
     comment: str | None = None
-    cases: list[tuple[Any, "ColumnSpec"]] | None = None  # [(condição | None, origem)], a 1ª que passa ganha
-    check: dict[str, Any] | None = None                  # validações depois do cast
-    missing_elements: str | None = None    # [*]/filtro com elementos sem o campo: skip | null (sem isto: erro)
-    rounding: str | None = None            # decimal: half_up, half_even, ...; double/float: nearest (sem isto: erro)
-    template_missing: str | None = None    # template com só algumas partes em falta: erro | empty | null
-    outside_model: bool = False            # o caminho não está no schema do modelo (não é verificado na carga)
+    cases: list[tuple[Any, "ColumnSpec"]] | None = None  # [(condition | None, source)], the 1st that passes wins
+    check: dict[str, Any] | None = None                  # validations after the cast
+    missing_elements: str | None = None    # [*]/filter with elements lacking the field: skip | null (without it: error)
+    rounding: str | None = None            # decimal: half_up, half_even, ...; double/float: nearest (without it: error)
+    template_missing: str | None = None    # template with only some parts missing: error | empty | null
+    outside_model: bool = False            # the path is not in the model's schema (not checked at load time)
 
 
 @dataclass
@@ -50,28 +50,28 @@ class TableSpec:
     name: str
     columns: list[ColumnSpec]
     explode: list[str] = field(default_factory=list)
-    keep_empty: bool = False                # explode "outer": gera linha mesmo com lista vazia
+    keep_empty: bool = False                # "outer" explode: produces a row even with an empty list
     where: Any = None
     keys: list[str] = field(default_factory=list)
     partition_by: list[str] = field(default_factory=list)
     mode: str = "append"
     dedupe: bool = True
-    auto: bool = False                      # achata automaticamente os campos escalares
+    auto: bool = False                      # flattens the scalar fields automatically
     auto_exclude: list[str] = field(default_factory=list)
     auto_max_depth: int = 5
-    auto_naming: str = "full"               # full (a_b_c) | leaf (c, sobe níveis só se colidir)
-    auto_collision: str = "error"           # error | prefix (item_<nome>) | skip, quando o nome já existe com outra origem
-    on_duplicate: str | None = None         # a mesma chave duas vezes no mesmo documento: erro | last | first
-    missing_columns: str | None = None      # merge com colunas da tabela que a config não produz: erro | null
-    auto_dates: bool = True                 # strings ISO-8601 -> timestamp no modo auto
-    auto_lists: str = "array"               # array | json | skip  (listas de objectos -> json|skip)
+    auto_naming: str = "full"               # full (a_b_c) | leaf (c, adds levels above only on a collision)
+    auto_collision: str = "error"           # error | prefix (item_<name>) | skip, when the name already exists with another source
+    on_duplicate: str | None = None         # the same key twice in the same document: error | last | first
+    missing_columns: str | None = None      # merge with table columns the config does not produce: error | null
+    auto_dates: bool = True                 # ISO-8601 strings -> timestamp in auto mode
+    auto_lists: str = "array"               # array | json | skip  (lists of objects -> json|skip)
     on_error: str = "fail"
     metadata_columns: list[str] = field(default_factory=list)
-    replace_by: list[str] = field(default_factory=list)  # DELETE ... WHERE col IN (lote) antes de inserir
+    replace_by: list[str] = field(default_factory=list)  # DELETE ... WHERE col IN (batch) before inserting
     location: str | None = None
     comment: str | None = None
     athena_options: dict[str, Any] = field(default_factory=dict)
-    # auto_naming: leaf com model.schema: nomes fixados a partir do modelo (ver pathcheck.model_leaf_paths)
+    # auto_naming: leaf with model.schema: names fixed from the model (see pathcheck.model_leaf_paths)
     leaf_names: Any = field(default=None, repr=False, compare=False)
 
 
@@ -84,10 +84,10 @@ class SubmodelSpec:
     defaults: dict[str, Any] = field(default_factory=dict)
     common_columns: list[ColumnSpec] = field(default_factory=list)
     unwrap: dict[str, Any] | None = None
-    document_id: dict[str, Any] | None = None  # UUID por documento, em todas as tabelas do submodelo
-    model: dict[str, Any] | None = None        # {schema, example}: modelo SAMM de origem (caminhos relativos à config)
-    validate: str = "off"                      # off | warn | skip | fail: valida cada documento contra o schema
-    walker: Any = field(default=None, repr=False, compare=False)   # o schema do model, já lido (pathcheck)
+    document_id: dict[str, Any] | None = None  # UUID per document, in every table of the submodel
+    model: dict[str, Any] | None = None        # {schema, example}: source SAMM model (paths relative to the config)
+    validate: str = "off"                      # off | warn | skip | fail: validates each document against the schema
+    walker: Any = field(default=None, repr=False, compare=False)   # the model's schema, already read (pathcheck)
 
 
 @dataclass
@@ -96,18 +96,18 @@ class Config:
     submodels: list[SubmodelSpec]
     input: dict[str, Any]
     defaults: dict[str, Any]
-    base_dir: Path | None = None               # pasta da configuração (para caminhos relativos)
+    base_dir: Path | None = None               # the configuration's folder (for relative paths)
 
 
 # --- YAML 1.2 ------------------------------------------------------------------------
 class YamlLoader(yaml.SafeLoader):
-    """YAML 1.2 (core schema) e sem chaves repetidas.
+    """YAML 1.2 (core schema) and no repeated keys.
 
-    O PyYAML segue o YAML 1.1: `yes/no/on/off` viram booleanos (`map: {yes: Y, on: L}` ficava {True: 'L'} —
-    duas traduções perdidas), `010` é 8 (octal) e `1:30` é 90 (sexagesimal). E uma chave repetida (ex.: a mesma
-    coluna duas vezes) ficava com o último valor sem aviso. Aqui só `true/false` são booleanos, `010` é 10,
-    `0o17` e `0x1A` são octal e hexadecimal, e uma chave repetida é erro. Datas sem aspas (`2025-01-01`)
-    ficam texto, como no YAML 1.2: passam pelas mesmas regras de datas dos documentos.
+    PyYAML follows YAML 1.1: `yes/no/on/off` become booleans (`map: {yes: Y, on: L}` became {True: 'L'} —
+    two translations lost), `010` is 8 (octal) and `1:30` is 90 (sexagesimal). And a repeated key (e.g. the same
+    column twice) kept the last value without a warning. Here only `true/false` are booleans, `010` is 10,
+    `0o17` and `0x1A` are octal and hexadecimal, and a repeated key is an error. Unquoted dates (`2025-01-01`)
+    stay text, as in YAML 1.2: they go through the same date rules as the documents.
     """
 
 
@@ -146,7 +146,7 @@ def _yaml_mapping(loader, node, deep=False):
             continue
         if key in seen:
             raise yaml.constructor.ConstructorError(
-                None, None, f"chave repetida {key!r} (a anterior está na linha {seen[key] + 1})", key_node.start_mark)
+                None, None, f"repeated key {key!r} (the previous one is on line {seen[key] + 1})", key_node.start_mark)
         seen[key] = key_node.start_mark.line
     return loader.construct_mapping(node, deep=deep)
 
@@ -156,15 +156,15 @@ YamlLoader.add_constructor("tag:yaml.org,2002:map", _yaml_mapping)
 
 
 def load_yaml(text: str) -> Any:
-    return yaml.load(text, Loader=YamlLoader)  # noqa: S506 - YamlLoader deriva do SafeLoader
+    return yaml.load(text, Loader=YamlLoader)  # noqa: S506 - YamlLoader derives from SafeLoader
 
 
 def _flag(value: Any, where: str, default: bool) -> bool:
-    """Opção booleana: só true/false. Antes era bool(valor): 'false' e 'no' (texto) davam True."""
+    """Boolean option: only true/false. Before it was bool(value): 'false' and 'no' (as text) gave True."""
     if value is None:
         return default
     if not isinstance(value, bool):
-        raise ConfigError(f"{where}: use true ou false (recebeu {value!r})")
+        raise ConfigError(f"{where}: use true or false (got {value!r})")
     return value
 
 
@@ -175,20 +175,20 @@ def _expand_env(text: str) -> str:
     def repl(m):
         val = os.environ.get(m.group(1), m.group(2))
         if val is None:
-            raise ConfigError(f"Variável de ambiente '{m.group(1)}' não definida (use ${{{m.group(1)}:-valor}})")
+            raise ConfigError(f"Environment variable '{m.group(1)}' is not set (use ${{{m.group(1)}:-value}})")
         return val
 
     return _ENV_RE.sub(repl, text)
 
 
 def sanitize(name: str) -> str:
-    """Nome válido para Athena: minúsculas, [a-z0-9_], camelCase -> snake_case."""
+    """Valid name for Athena: lowercase, [a-z0-9_], camelCase -> snake_case."""
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name))
     s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
     s = re.sub(r"[^0-9a-zA-Z_]+", "_", s).strip("_").lower()
     s = re.sub(r"_+", "_", s)
     if not s:
-        raise ConfigError(f"Nome inválido: '{name}'")
+        raise ConfigError(f"Invalid name: '{name}'")
     return f"c_{s}" if s[0].isdigit() else s
 
 
@@ -203,7 +203,7 @@ def _raw_column_names(spec: Any) -> list[str]:
 def _check_keys(d: dict, allowed: set[str], where: str):
     unknown = set(d) - allowed
     if unknown:
-        raise ConfigError(f"{where}: chave(s) desconhecida(s) {sorted(unknown)}. Permitidas: {sorted(allowed)}")
+        raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}. Allowed: {sorted(allowed)}")
 
 
 _COL_KEYS = {"path", "paths", "template", "const", "type", "transform", "default", "required", "on_error", "comment",
@@ -214,7 +214,7 @@ CHECK_ON_FAIL = {"warn", "null", "skip_row", "fail"}
 
 
 def _condition(cond: Any, where: str) -> Any:
-    """Valida uma condição (estrutura, operador, tipo do value, regex) ao carregar."""
+    """Validates a condition (structure, operator, type of the value, regex) at load time."""
     from .conditions import validate  # noqa: PLC0415
 
     try:
@@ -225,22 +225,22 @@ def _condition(cond: Any, where: str) -> Any:
 
 
 def parse_cases(name: str, spec: Any, where: str) -> list[tuple[Any, ColumnSpec]]:
-    """cases: [{when: <condição>, path|paths|template|const: ..., transform: ...}, ..., {else: valor}]"""
+    """cases: [{when: <condition>, path|paths|template|const: ..., transform: ...}, ..., {else: value}]"""
     if not isinstance(spec, list) or not spec:
-        raise ConfigError(f"{where}: 'cases' tem de ser uma lista não vazia")
+        raise ConfigError(f"{where}: 'cases' must be a non-empty list")
     out = []
     for i, case in enumerate(spec):
         w = f"{where}[{i}]"
         if not isinstance(case, dict):
-            raise ConfigError(f"{w}: cada caso é um objecto com when + origem, ou {{else: valor}}")
+            raise ConfigError(f"{w}: each case is an object with when + a source, or {{else: value}}")
         if "else" in case:
             if len(case) != 1:
-                raise ConfigError(f"{w}: 'else' não se combina com outras chaves (use {{path: ...}} sem 'when')")
+                raise ConfigError(f"{w}: 'else' cannot be combined with other keys (use {{path: ...}} without 'when')")
             out.append((None, ColumnSpec(name, const=case["else"], has_const=True)))
             continue
         _check_keys(case, {"when", "transform", *_SOURCES}, w)
         if not any(k in case for k in _SOURCES):
-            raise ConfigError(f"{w}: falta a origem do valor (path, paths, template ou const)")
+            raise ConfigError(f"{w}: the value's source is missing (path, paths, template or const)")
         body = {k: v for k, v in case.items() if k != "when"}
         out.append((_condition(case.get("when"), f"{w}.when"), parse_column(name, body, w)))
     return out
@@ -248,31 +248,31 @@ def parse_cases(name: str, spec: Any, where: str) -> list[tuple[Any, ColumnSpec]
 
 def parse_check(spec: Any, where: str) -> dict[str, Any]:
     if not isinstance(spec, dict):
-        raise ConfigError(f"{where}: 'check' tem de ser um objecto")
+        raise ConfigError(f"{where}: 'check' must be an object")
     _check_keys(spec, _CHECK_KEYS, where)
     chk = dict(spec)
     chk["ignore_case"] = _flag(chk.get("ignore_case"), f"{where}.ignore_case", False)
     chk.setdefault("on_fail", "warn")
     if chk["on_fail"] not in CHECK_ON_FAIL:
-        raise ConfigError(f"{where}.on_fail deve ser um de {sorted(CHECK_ON_FAIL)}")
+        raise ConfigError(f"{where}.on_fail must be one of {sorted(CHECK_ON_FAIL)}")
     if "regex" in chk:
         try:
             chk["_regex"] = re.compile(chk["regex"], re.IGNORECASE if chk.get("ignore_case") else 0)
         except re.error as e:
-            raise ConfigError(f"{where}.regex inválido: {e}") from e
+            raise ConfigError(f"{where}.regex is invalid: {e}") from e
     if "in" in chk:
         from .transforms import typed_key  # noqa: PLC0415
 
         vals = chk["in"] if isinstance(chk["in"], list) else [chk["in"]]
         if not vals or any(v is None or isinstance(v, (list, dict)) for v in vals):
-            raise ConfigError(f"{where}.in: use uma lista de valores simples")
-        # comparação com tipo: 2 e 2.0 são iguais (antes '2.0' != '2'); o número 2 e o texto '2' não
+            raise ConfigError(f"{where}.in: use a list of simple values")
+        # comparison with type: 2 and 2.0 are equal (before '2.0' != '2'); the number 2 and the text '2' are not
         chk["_in"] = {typed_key(v, chk["ignore_case"]) for v in vals}
     for k in ("min", "max"):
         if k in chk and (isinstance(chk[k], bool) or not isinstance(chk[k], (int, float))):
-            raise ConfigError(f"{where}.{k}: tem de ser um número")
+            raise ConfigError(f"{where}.{k}: must be a number")
     if "min" in chk and "max" in chk and chk["min"] > chk["max"]:
-        raise ConfigError(f"{where}: min maior do que max")
+        raise ConfigError(f"{where}: min greater than max")
     if "required_if" in chk:
         _condition(chk["required_if"], f"{where}.required_if")
     return chk
@@ -283,9 +283,9 @@ _SHORT_TF = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\((.*)\))?\s*$")
 
 
 def parse_short(spec: str, where: str) -> dict[str, Any]:
-    """Forma compacta: 'caminho | transf | transf(arg) ::tipo'.
+    """Compact form: 'path | transf | transf(arg) ::type'.
 
-    Em YAML sem aspas, '::' tem de vir colado ao tipo ('::int'): ': ' iniciaria um mapa.
+    In unquoted YAML, '::' must be attached to the type ('::int'): ': ' would start a mapping.
     """
     out: dict[str, Any] = {}
     m = _SHORT_TYPE.search(spec)
@@ -297,7 +297,7 @@ def parse_short(spec: str, where: str) -> dict[str, Any]:
     for tf in tfs:
         m = _SHORT_TF.match(tf)
         if not m:
-            raise ConfigError(f"{where}: transformação inválida '{tf}' (use nome ou nome(arg))")
+            raise ConfigError(f"{where}: invalid transformation '{tf}' (use name or name(arg))")
         chain.append(m.group(1) if m.group(2) is None else {m.group(1): load_yaml(m.group(2))})
     if chain:
         out["transform"] = chain
@@ -309,13 +309,13 @@ def parse_column(name: str, spec: Any, where: str) -> ColumnSpec:
     if isinstance(spec, str):
         spec = parse_short(spec, f"{where}.{name}")
     if spec is None:
-        return ColumnSpec(col_name, path=name)  # coluna: ~  -> usa o próprio nome como caminho
+        return ColumnSpec(col_name, path=name)  # column: ~  -> uses its own name as the path
     if not isinstance(spec, dict):
         return ColumnSpec(col_name, const=spec, has_const=True)
     _check_keys(spec, _COL_KEYS, f"{where}.{name}")
     sources = [k for k in ("path", "paths", "template", "const", "cases") if k in spec]
     if len(sources) > 1:
-        raise ConfigError(f"{where}.{name}: use apenas um de path/paths/template/const/cases")
+        raise ConfigError(f"{where}.{name}: use only one of path/paths/template/const/cases")
     col = ColumnSpec(
         col_name,
         path=spec.get("path"),
@@ -339,10 +339,10 @@ def parse_column(name: str, spec: Any, where: str) -> ColumnSpec:
     if col.template_missing is not None:
         has_template = col.template is not None or any(c.template is not None for _, c in col.cases or [])
         if col.template_missing not in ("empty", "null") or not has_template:
-            raise ConfigError(f"{where}.{name}: template_missing aceita empty ou null, numa coluna com template")
+            raise ConfigError(f"{where}.{name}: template_missing accepts empty or null, in a column with a template")
     _check_rounding(col, f"{where}.{name}")
     if col.missing_elements not in (None, "skip", "null"):
-        raise ConfigError(f"{where}.{name}: missing_elements deve ser skip ou null")
+        raise ConfigError(f"{where}.{name}: missing_elements must be skip or null")
     try:
         TF.check_chain(col.transform)
     except ValueError as e:
@@ -350,28 +350,28 @@ def parse_column(name: str, spec: Any, where: str) -> ColumnSpec:
     if not sources and col.transform is None:
         col.path = name
     if col.on_error and col.on_error not in ON_ERROR:
-        raise ConfigError(f"{where}.{name}: on_error deve ser um de {sorted(ON_ERROR)}")
+        raise ConfigError(f"{where}.{name}: on_error must be one of {sorted(ON_ERROR)}")
     return col
 
 
 def _check_rounding(col: ColumnSpec, where: str) -> None:
-    """`rounding` só faz sentido com um tipo que arredonda: decimal (modo) ou double/float (nearest)."""
+    """`rounding` only makes sense with a type that rounds: decimal (mode) or double/float (nearest)."""
     if col.rounding is None:
         return
     from .numbers import MODES  # noqa: PLC0415
 
     leaves = set(re.findall(r"decimal|double|float", col.type or ""))
     if not leaves:
-        raise ConfigError(f"{where}: rounding só se aplica a colunas decimal, double ou float (type: {col.type})")
+        raise ConfigError(f"{where}: rounding only applies to decimal, double or float columns (type: {col.type})")
     allowed = set(MODES) if "decimal" in leaves else {"nearest"}
     if col.rounding not in allowed:
-        raise ConfigError(f"{where}: rounding {col.rounding!r} inválido para {col.type}; use um de {sorted(allowed)}")
+        raise ConfigError(f"{where}: rounding {col.rounding!r} is invalid for {col.type}; use one of {sorted(allowed)}")
 
 
 def parse_columns(spec: Any, where: str) -> list[ColumnSpec]:
     if spec is None:
         return []
-    if isinstance(spec, list):  # lista de nomes = caminhos com o mesmo nome
+    if isinstance(spec, list):  # list of names = paths with the same name
         return [parse_column(c, None, where) if isinstance(c, str) else parse_column(*next(iter(c.items())), where) for c in spec]
     return [parse_column(k, v, where) for k, v in spec.items()]
 
@@ -381,7 +381,7 @@ _TABLE_KEYS = {
     "auto", "auto_exclude", "auto_max_depth", "auto_lists", "auto_dates", "auto_collision", "auto_naming", "on_error", "metadata_columns",
     "location", "comment", "athena_options", "replace_by", "on_duplicate", "missing_columns",
 }
-# opções que a configuração decide: passadas em athena_options mudavam o modo, os tipos ou as chaves sem se ver
+# options the configuration decides: passed in athena_options they changed the mode, the types or the keys unseen
 _RESERVED_ATHENA = {"df", "database", "table", "temp_path", "table_location", "partition_cols", "dtype", "mode",
                     "merge_cols", "merge_condition", "merge_match_nulls", "schema_evolution", "fill_missing_columns_in_df",
                     "keep_files", "workgroup", "boto3_session"}
@@ -394,42 +394,42 @@ def _metadata(value: Any) -> list[str]:
         return []
     bad = set(value) - set(METADATA)
     if bad:
-        raise ConfigError(f"metadata_columns desconhecidas: {sorted(bad)}. Permitidas: {METADATA}")
+        raise ConfigError(f"unknown metadata_columns: {sorted(bad)}. Allowed: {METADATA}")
     return list(value)
 
 
 def _check_write_options(mode: str, partition_by: list, athena_options: Any, missing_columns: Any, where: str) -> None:
-    """Opções da escrita, iguais para tabelas explícitas e para as geradas pelo auto_normalize (a partir de defaults)."""
+    """Write options, the same for explicit tables and for those generated by auto_normalize (from defaults)."""
     if mode not in MODES:
-        raise ConfigError(f"{where}: mode '{mode}' inválido. Use {sorted(MODES)}")
+        raise ConfigError(f"{where}: invalid mode '{mode}'. Use {sorted(MODES)}")
     if missing_columns not in (None, "null"):
-        raise ConfigError(f"{where}: missing_columns só aceita null (em merge, anula as colunas da tabela que a "
-                          f"configuração não produz)")
+        raise ConfigError(f"{where}: missing_columns only accepts null (in merge, sets to null the table columns that the "
+                          f"configuration does not produce)")
     if not isinstance(athena_options, dict):
-        raise ConfigError(f"{where}.athena_options tem de ser um mapa")
+        raise ConfigError(f"{where}.athena_options must be a mapping")
     reserved = set(athena_options) & _RESERVED_ATHENA
     if reserved:
-        raise ConfigError(f"{where}.athena_options: {sorted(reserved)} são decididas pela configuração "
-                          f"(mode, keys, partition_by, tipos...) e não podem ser passadas aqui")
+        raise ConfigError(f"{where}.athena_options: {sorted(reserved)} are decided by the configuration "
+                          f"(mode, keys, partition_by, types...) and cannot be passed here")
     if mode == "overwrite_partitions":
         if not partition_by:
-            raise ConfigError(f"{where}: overwrite_partitions precisa de partition_by")
+            raise ConfigError(f"{where}: overwrite_partitions needs partition_by")
         transformed = [p for p in partition_by if "(" in p]
         if transformed:
-            raise ConfigError(f"{where}: overwrite_partitions só funciona com partições por coluna, não {transformed} "
-                              f"(o DELETE das partições usa os valores das colunas)")
+            raise ConfigError(f"{where}: overwrite_partitions only works with partitions by column, not {transformed} "
+                              f"(the partitions' DELETE uses the column values)")
 
 
 def parse_table(spec: dict, defaults: dict, common: list[ColumnSpec], where: str) -> TableSpec:
     _check_keys(spec, _TABLE_KEYS, where)
     if "name" not in spec:
-        raise ConfigError(f"{where}: falta 'name'")
+        raise ConfigError(f"{where}: 'name' is missing")
     merged = {**defaults, **spec}
     explicit = parse_columns(spec.get("columns"), f"{where}.columns")
     seen_names: dict[str, str] = {}
     for raw_name, c in zip(_raw_column_names(spec.get("columns")), explicit):
-        if c.name in seen_names:   # ex.: fossilGhg e fossil_ghg -> fossil_ghg: antes ficava só a última
-            raise ConfigError(f"{where}.columns: '{seen_names[c.name]}' e '{raw_name}' dão a mesma coluna '{c.name}'")
+        if c.name in seen_names:   # e.g. fossilGhg and fossil_ghg -> fossil_ghg: before only the last one stayed
+            raise ConfigError(f"{where}.columns: '{seen_names[c.name]}' and '{raw_name}' give the same column '{c.name}'")
         seen_names[c.name] = raw_name
     names = {c.name for c in explicit}
     columns = [c for c in common if c.name not in names] + explicit
@@ -460,25 +460,25 @@ def parse_table(spec: dict, defaults: dict, common: list[ColumnSpec], where: str
         athena_options={**defaults.get("athena_options", {}), **spec.get("athena_options", {})},
     )
     if t.mode not in MODES:
-        raise ConfigError(f"{where}: mode '{t.mode}' inválido. Use {sorted(MODES)}")
+        raise ConfigError(f"{where}: invalid mode '{t.mode}'. Use {sorted(MODES)}")
     if t.mode == "merge" and not t.keys:
-        raise ConfigError(f"{where}: mode 'merge' precisa de 'keys'")
+        raise ConfigError(f"{where}: mode 'merge' needs 'keys'")
     if t.on_error not in ON_ERROR:
-        raise ConfigError(f"{where}: on_error deve ser um de {sorted(ON_ERROR)}")
+        raise ConfigError(f"{where}: on_error must be one of {sorted(ON_ERROR)}")
     if t.auto_naming not in ("full", "leaf"):
-        raise ConfigError(f"{where}: auto_naming deve ser full|leaf")
+        raise ConfigError(f"{where}: auto_naming must be full|leaf")
     if t.auto_lists not in ("array", "json", "skip"):
-        raise ConfigError(f"{where}: auto_lists deve ser array|json|skip")
+        raise ConfigError(f"{where}: auto_lists must be array|json|skip")
     if t.auto_collision not in ("error", "prefix", "skip"):
-        raise ConfigError(f"{where}: auto_collision deve ser error|prefix|skip")
+        raise ConfigError(f"{where}: auto_collision must be error|prefix|skip")
     if t.on_duplicate is not None:
         if t.on_duplicate not in ("last", "first"):
-            raise ConfigError(f"{where}: on_duplicate deve ser last ou first")
+            raise ConfigError(f"{where}: on_duplicate must be last or first")
         if not t.keys:
-            raise ConfigError(f"{where}: on_duplicate precisa de keys")
+            raise ConfigError(f"{where}: on_duplicate needs keys")
     _check_write_options(t.mode, t.partition_by, t.athena_options, t.missing_columns, where)
     if t.mode == "merge" and not t.dedupe:
-        raise ConfigError(f"{where}: mode merge com dedupe: false não é possível (o MERGE precisa de chaves únicas no lote)")
+        raise ConfigError(f"{where}: mode merge with dedupe: false is not possible (MERGE needs unique keys in the batch)")
     return t
 
 
@@ -495,26 +495,26 @@ def parse_document_id(spec: Any, where: str) -> dict[str, Any] | None:
     if spec is True:
         spec = {}
     if not isinstance(spec, dict):
-        raise ConfigError(f"{where}: use true ou um objecto {{column, from, strategy, namespace}}")
+        raise ConfigError(f"{where}: use true or an object {{column, from, strategy, namespace}}")
     _check_keys(spec, {"column", "from", "strategy", "namespace", "on_missing"}, where)
     raw_src = spec.get("from")
     raw_src = [raw_src] if isinstance(raw_src, (str, dict)) else list(raw_src or [])
     src: list[tuple[str, str | None]] = []
     for i, item in enumerate(raw_src):
-        # 'catenaXId' (texto) ou {path: version, type: int}: números e booleanos precisam de tipo
+        # 'catenaXId' (text) or {path: version, type: int}: numbers and booleans need a type
         if isinstance(item, str):
             src.append((item, None))
         elif isinstance(item, dict) and isinstance(item.get("path"), str) and set(item) <= {"path", "type"}:
             src.append((item["path"], T.normalize(item["type"]) if item.get("type") else None))
         else:
-            raise ConfigError(f"{where}.from[{i}]: use um caminho ou {{path: ..., type: ...}}")
+            raise ConfigError(f"{where}.from[{i}]: use a path or {{path: ..., type: ...}}")
     if spec.get("on_missing", "fail") not in ("fail", "content"):
-        raise ConfigError(f"{where}.on_missing deve ser fail ou content")
+        raise ConfigError(f"{where}.on_missing must be fail or content")
     strategy = spec.get("strategy", "key" if src else "content")
     if strategy not in DOC_ID_STRATEGIES:
-        raise ConfigError(f"{where}.strategy deve ser um de {sorted(DOC_ID_STRATEGIES)}")
+        raise ConfigError(f"{where}.strategy must be one of {sorted(DOC_ID_STRATEGIES)}")
     if strategy == "key" and not src:
-        raise ConfigError(f"{where}: strategy 'key' precisa de 'from' (caminhos dos campos que identificam o documento)")
+        raise ConfigError(f"{where}: strategy 'key' needs 'from' (paths of the fields that identify the document)")
     return {"column": sanitize(spec.get("column", "document_id")), "from": src, "strategy": strategy,
             "namespace": str(spec.get("namespace", "cx2iceberg")), "on_missing": spec.get("on_missing", "fail")}
 
@@ -535,10 +535,10 @@ def parse_unwrap(spec: Any, where: str) -> dict[str, Any] | None:
         "on_multiple": spec.get("on_multiple", "fail"),
     }
     if rule["on_multiple"] not in ("fail", "first", "keep"):
-        raise ConfigError(f"{where}.on_multiple deve ser fail|first|keep")
+        raise ConfigError(f"{where}.on_multiple must be fail|first|keep")
     bad = [p for p in rule["paths"] | rule["except"] if "[" in p]
     if bad:
-        raise ConfigError(f"{where}: caminhos de unwrap não levam índices: {bad}")
+        raise ConfigError(f"{where}: unwrap paths take no indices: {bad}")
     return rule
 
 
@@ -548,9 +548,9 @@ _INPUT_KEYS = {"semantic_id", "semantic_id_map", "envelope", "list_is_document",
 
 
 def _parse_input(inp: Any) -> dict[str, Any]:
-    """Valida `input:` (antes uma chave mal escrita, ex. naive_timestamp, era ignorada sem aviso)."""
+    """Validates `input:` (before, a misspelled key, e.g. naive_timestamp, was ignored without a warning)."""
     if not isinstance(inp, dict):
-        raise ConfigError("input: tem de ser um objecto")
+        raise ConfigError("input: must be an object")
     _check_keys(inp, _INPUT_KEYS, "input")
     if "envelope" in inp:
         if not isinstance(inp["envelope"], dict):
@@ -559,7 +559,7 @@ def _parse_input(inp: Any) -> dict[str, Any]:
     for k in ("list_is_document", "match_all"):
         _flag(inp.get(k), f"input.{k}", False)
     if inp.get("on_unmatched", "fail") not in ("fail", "skip"):
-        raise ConfigError("input.on_unmatched deve ser fail ou skip")
+        raise ConfigError("input.on_unmatched must be fail or skip")
     from .dates import check_policy  # noqa: PLC0415
 
     try:
@@ -570,13 +570,13 @@ def _parse_input(inp: Any) -> dict[str, Any]:
 
 
 def _match_spec(m: Any, where: str) -> dict:
-    """Valida o match: uma chave mal escrita (ex.: sematic_id) era ignorada e o submodelo aceitava tudo."""
+    """Validates the match: a misspelled key (e.g. sematic_id) was ignored and the submodel accepted everything."""
     if not isinstance(m, dict):
-        raise ConfigError(f"{where}: tem de ser um objecto")
+        raise ConfigError(f"{where}: must be an object")
     _check_keys(m, {"semantic_id", "file", "has_paths", "where", "any"}, where)
     if "any" in m:
         if not isinstance(m["any"], list) or not m["any"]:
-            raise ConfigError(f"{where}.any: use uma lista de blocos de match")
+            raise ConfigError(f"{where}.any: use a list of match blocks")
         for i, x in enumerate(m["any"]):
             _match_spec(x, f"{where}.any[{i}]")
     if "where" in m:
@@ -585,8 +585,8 @@ def _match_spec(m: Any, where: str) -> dict:
 
 
 def _check_replace_by(subs: list) -> None:
-    """replace_by: colunas definidas na tabela (ou a do document_id) e calculáveis ao nível do documento
-    ($root., $meta.): a chave é precisa também quando o documento não gera linhas (lista que ficou vazia)."""
+    """replace_by: columns defined in the table (or the document_id one) that can be computed at document level
+    ($root., $meta.): the key is also needed when the document produces no rows (a list that became empty)."""
     from .pathcheck import column_paths  # noqa: PLC0415
 
     for sub in subs:
@@ -597,21 +597,21 @@ def _check_replace_by(subs: list) -> None:
                 if name == doc_id:
                     continue
                 if name not in cols:
-                    raise ConfigError(f"tabela '{t.name}': replace_by '{name}' não é uma coluna declarada da tabela")
+                    raise ConfigError(f"table '{t.name}': replace_by '{name}' is not a declared column of the table")
                 if not t.explode:
                     continue
                 bad = [p for p, _ in column_paths(cols[name]) if not p.strip().startswith(("$root", "$meta"))]
                 if bad:
-                    raise ConfigError(f"tabela '{t.name}': a coluna '{name}' do replace_by depende do elemento do explode "
-                                      f"({bad}); use caminhos $root./$meta. (identifica o documento, não a linha)")
+                    raise ConfigError(f"table '{t.name}': replace_by column '{name}' depends on the explode element "
+                                      f"({bad}); use $root./$meta. paths (it identifies the document, not the row)")
 
 
 _SHARED = ("mode", "keys", "partition_by", "replace_by", "dedupe", "on_duplicate", "location", "metadata_columns")
 
 
 def _check_shared_tables(subs: list) -> None:
-    """Uma tabela alimentada por várias regras (ex.: PCF v7 e v9) tem de ter o mesmo modo, chaves e partições,
-    e o mesmo tipo em cada coluna comum. Antes valia a 1.ª regra em silêncio (um decimal da 2.ª virava double)."""
+    """A table fed by several rules (e.g. PCF v7 and v9) must have the same mode, keys and partitions,
+    and the same type in each common column. Before, the 1st rule silently won (a decimal from the 2nd became double)."""
     seen: dict[str, tuple[str, TableSpec]] = {}
     problems = []
     for sub in subs:
@@ -623,15 +623,15 @@ def _check_shared_tables(subs: list) -> None:
             first_where, first = seen[t.name]
             for attr in _SHARED:
                 if getattr(first, attr) != getattr(t, attr):
-                    problems.append(f"tabela '{t.name}': {attr} {getattr(first, attr)!r} em {first_where} e "
-                                    f"{getattr(t, attr)!r} em {where}")
+                    problems.append(f"table '{t.name}': {attr} {getattr(first, attr)!r} in {first_where} and "
+                                    f"{getattr(t, attr)!r} in {where}")
             a = {c.name: (c.type, c.rounding) for c in first.columns}
             for c in t.columns:
                 if c.name in a and a[c.name] != (c.type, c.rounding):
-                    problems.append(f"tabela '{t.name}', coluna '{c.name}': tipo {a[c.name][0]!r} em {first_where} e "
-                                    f"{c.type!r} em {where} (rounding {a[c.name][1]!r} / {c.rounding!r})")
+                    problems.append(f"table '{t.name}', column '{c.name}': type {a[c.name][0]!r} in {first_where} and "
+                                    f"{c.type!r} in {where} (rounding {a[c.name][1]!r} / {c.rounding!r})")
     if problems:
-        raise ConfigError("regras diferentes para a mesma tabela:\n  " + "\n  ".join(problems))
+        raise ConfigError("different rules for the same table:\n  " + "\n  ".join(problems))
 
 
 def load(path: str | Path) -> Config:
@@ -641,35 +641,35 @@ def load(path: str | Path) -> Config:
     except yaml.YAMLError as e:
         hint = ""
         if "mapping values are not allowed" in str(e):
-            hint = " Dica: na forma compacta escreva '::int' (sem espaço depois de '::') ou ponha o valor entre aspas."
-        raise ConfigError(f"YAML inválido em {path}: {e}.{hint}") from e
+            hint = " Hint: in the compact form write '::int' (no space after '::') or put the value in quotes."
+        raise ConfigError(f"Invalid YAML in {path}: {e}.{hint}") from e
     return from_dict(raw, Path(path).resolve().parent)
 
 
 def _auto_normalize(an: dict, defaults: dict, model: Any, where: str) -> dict:
-    """Valida o auto_normalize e resolve `children`: de onde vêm as tabelas filhas.
+    """Validates auto_normalize and resolves `children`: where the child tables come from.
 
-    schema: do model.schema (todas as listas do modelo, haja ou não dados no lote) — omissão com model.schema;
-    batch: só das listas presentes no lote. Sem model.schema e com um modo que apaga ou substitui (merge: replace_by
-    nas filhas; overwrite...), uma lista que ficou vazia em todos os documentos do lote não gerava a tabela e as
-    linhas antigas ficavam: tem de ser declarado (children: batch), e fica contado em cada carga."""
+    schema: from model.schema (every list of the model, whether or not the batch has data for it) — the default with
+    model.schema; batch: only from the lists present in the batch. Without model.schema and with a mode that deletes or
+    replaces (merge: replace_by on the children; overwrite...), a list that was empty in every document of the batch
+    produced no table and the old rows stayed: it must be declared (children: batch), and it is counted in every load."""
     naming = an.get("naming", "full")
     if naming not in ("full", "leaf"):
-        raise ConfigError(f"{where}.naming deve ser full ou leaf")
+        raise ConfigError(f"{where}.naming must be full or leaf")
     if naming == "leaf" and not model:
-        raise ConfigError(f"{where}: naming: leaf precisa de model.schema: sem ele os nomes das tabelas e colunas "
-                          f"dependem das listas e campos presentes em cada lote/documento. Declare model.schema ou use "
+        raise ConfigError(f"{where}: naming: leaf needs model.schema: without it the table and column names "
+                          f"depend on the lists and fields present in each batch/document. Declare model.schema or use "
                           f"naming: full")
     children = an.get("children")
     if children not in (None, "schema", "batch"):
-        raise ConfigError(f"{where}.children deve ser schema ou batch")
+        raise ConfigError(f"{where}.children must be schema or batch")
     if children == "schema" and not model:
-        raise ConfigError(f"{where}: children: schema precisa de model.schema")
+        raise ConfigError(f"{where}: children: schema needs model.schema")
     mode = defaults.get("mode", "merge")
     if children is None and not model and mode != "append":
-        raise ConfigError(f"{where}: sem model.schema as tabelas filhas vêm só das listas presentes em cada lote: com "
-                          f"mode {mode}, uma lista que ficou vazia em todos os documentos do lote não apagaria as linhas "
-                          f"antigas. Declare model.schema (recomendado) ou auto_normalize.children: batch")
+        raise ConfigError(f"{where}: without model.schema the child tables only come from the lists present in each batch: with "
+                          f"mode {mode}, a list that was empty in every document of the batch would not delete the old "
+                          f"rows. Declare model.schema (recommended) or auto_normalize.children: batch")
     return {**an, "children": children or ("schema" if model else "batch")}
 
 
@@ -699,23 +699,23 @@ def from_dict(raw: dict, base_dir: str | Path | None = None) -> Config:
         if an is not None:
             _check_keys(an, {"table_prefix", "id_path", "id_column", "exclude", "max_depth", "naming", "children"},
                         f"{where}.auto_normalize")
-            # as tabelas geradas só existem durante a carga: as opções de escrita dos defaults verificam-se aqui
-            # (antes, defaults.athena_options: {mode: overwrite} passava e substituía a tabela raiz do merge)
+            # the generated tables only exist during the load: the defaults' write options are checked here
+            # (before, defaults.athena_options: {mode: overwrite} passed and replaced the merge's root table)
             _check_write_options(sdefaults.get("mode", "merge"), list(sdefaults.get("partition_by", []) or []),
                                  sdefaults.get("athena_options", {}) or {}, sdefaults.get("missing_columns"),
                                  f"{where}.defaults (auto_normalize)")
             an = _auto_normalize(an, sdefaults, s.get("model"), f"{where}.auto_normalize")
         if not tables and an is None:
-            raise ConfigError(f"{where}: defina 'tables' e/ou 'auto_normalize'")
+            raise ConfigError(f"{where}: define 'tables' and/or 'auto_normalize'")
         model = s.get("model")
         leafy = [t.name for t in tables if t.auto and t.auto_naming == "leaf"]
         if leafy and not model:
-            raise ConfigError(f"{where}: auto_naming: leaf (tabelas {leafy}) precisa de model.schema: sem ele o nome de "
-                              f"cada coluna depende dos campos presentes em cada documento (o mesmo campo ia para "
-                              f"'fossil' num documento e 'ghg_fossil' noutro). Declare model.schema ou use auto_naming: full")
+            raise ConfigError(f"{where}: auto_naming: leaf (tables {leafy}) needs model.schema: without it the name of "
+                              f"each column depends on the fields present in each document (the same field went to "
+                              f"'fossil' in one document and 'ghg_fossil' in another). Declare model.schema or use auto_naming: full")
         if model is not None:
             if not isinstance(model, dict) or "schema" not in model:
-                raise ConfigError(f"{where}.model: indique pelo menos 'schema' (e opcionalmente 'example')")
+                raise ConfigError(f"{where}.model: give at least 'schema' (and optionally 'example')")
             _check_keys(model, {"schema", "example", "id", "version"}, f"{where}.model")
         validate = s.get("validate", "warn" if model else "off")
         if validate is True:
@@ -723,19 +723,19 @@ def from_dict(raw: dict, base_dir: str | Path | None = None) -> Config:
         if validate is False:
             validate = "off"
         if validate not in VALIDATE_MODES:
-            raise ConfigError(f"{where}.validate deve ser um de {sorted(VALIDATE_MODES)}")
+            raise ConfigError(f"{where}.validate must be one of {sorted(VALIDATE_MODES)}")
         if validate != "off" and not model:
-            raise ConfigError(f"{where}.validate precisa de model.schema")
+            raise ConfigError(f"{where}.validate needs model.schema")
         match = _match_spec(s.get("match") or {}, f"{where}.match")
         subs.append(SubmodelSpec(name, match, tables, an, sdefaults, common,
                                  parse_unwrap(s.get("unwrap"), f"{where}.unwrap"),
                                  parse_document_id(s.get("document_id"), f"{where}.document_id"),
                                  model, validate))
     if not subs:
-        raise ConfigError("config: não há 'submodels'")
+        raise ConfigError("config: there are no 'submodels'")
     _check_shared_tables(subs)
     _check_replace_by(subs)
     cfg = Config(target, subs, inp, defaults, Path(base_dir) if base_dir else None)
-    from .pathcheck import check_config  # noqa: PLC0415 - evitar import circular
-    check_config(cfg)   # caminhos, $parent/$index/$meta e (com model.schema) o modelo: tudo antes de ler dados
+    from .pathcheck import check_config  # noqa: PLC0415 - avoids a circular import
+    check_config(cfg)   # paths, $parent/$index/$meta and (with model.schema) the model: all before reading any data
     return cfg

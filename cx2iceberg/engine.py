@@ -1,4 +1,4 @@
-"""Aplica as regras da configuração a documentos JSON e produz linhas por tabela."""
+"""Applies the configuration's rules to JSON documents and produces rows per table."""
 from __future__ import annotations
 
 import dataclasses
@@ -43,22 +43,22 @@ class Document:
     data: Any
     source_file: str | None = None
     semantic_id: str | None = None
-    meta: dict[str, Any] = field(default_factory=dict)  # ex.: document_id
-    index: int | None = None   # posição no ficheiro (lista JSON ou JSON Lines); None se o ficheiro é um só documento
-    error: str | None = None   # não foi possível ler (ex.: JSON inválido, não é UTF-8): o documento é rejeitado
-    notice: str | None = None  # nada a processar, mas a registar (ex.: ficheiro sem documentos)
+    meta: dict[str, Any] = field(default_factory=dict)  # e.g. document_id
+    index: int | None = None   # position in the file (JSON list or JSON Lines); None if the file is a single document
+    error: str | None = None   # could not be read (e.g. invalid JSON, not UTF-8): the document is rejected
+    notice: str | None = None  # nothing to process, but worth recording (e.g. file without documents)
 
 
 class RowOrigins:
-    """De que documento e de que posição do explode veio cada linha, em memória compacta.
+    """Which document and which explode position each row came from, in compact memory.
 
-    Um dict por linha custava ~240 bytes (mais do que a própria linha). Aqui guardam-se inteiros em arrays:
-    8 bytes para o nº do documento, 8 por nível de explode e 2 para o caminho de explode (uma tabela pode ser
-    alimentada por regras com explodes diferentes). Ficheiro, posição no ficheiro e o texto 'childItems[3]' só
-    são reconstruídos quando um evento do relatório precisa deles.
+    A dict per row cost ~240 bytes (more than the row itself). Here integers are kept in arrays:
+    8 bytes for the document number, 8 per explode level and 2 for the explode path (a table can be
+    fed by rules with different explodes). File, position in the file and the text 'childItems[3]' are only
+    rebuilt when a report event needs them.
     """
 
-    ABSENT, EMPTY = -2, -1   # nível que esta linha não tem | explode vazio com keep_empty
+    ABSENT, EMPTY = -2, -1   # level this row does not have | empty explode with keep_empty
 
     __slots__ = ("docs", "layout", "positions", "layouts")
 
@@ -113,20 +113,20 @@ class TableResult:
     rows: list[dict[str, Any]] = field(default_factory=list)
     types: dict[str, str] = field(default_factory=dict)
     skipped: int = 0
-    check_failures: dict[str, int] = field(default_factory=dict)  # coluna -> nº de valores que falharam o check
-    origins: RowOrigins = field(default_factory=RowOrigins, repr=False)  # por linha: documento e posição (compacto)
-    inferred: dict[str, str] = field(default_factory=dict, repr=False)   # tipo final das colunas struct inferidas
-    specs: list = field(default_factory=list, repr=False)                # todas as regras que alimentam a tabela
-    # replace_by: chave de CADA documento aceite que passou pela tabela, mesmo sem linhas (lista que ficou vazia,
-    # linhas todas excluídas): o DELETE das linhas antigas sai daqui, não das linhas (antes ficavam filhos antigos)
+    check_failures: dict[str, int] = field(default_factory=dict)  # column -> number of values that failed the check
+    origins: RowOrigins = field(default_factory=RowOrigins, repr=False)  # per row: document and position (compact)
+    inferred: dict[str, str] = field(default_factory=dict, repr=False)   # final type of the inferred struct columns
+    specs: list = field(default_factory=list, repr=False)                # every rule that feeds the table
+    # replace_by: key of EVERY accepted document that went through the table, even without rows (a list that became
+    # empty, every row excluded): the DELETE of the old rows comes from here, not from the rows (old children used to stay)
     replace_keys: dict[int, tuple] = field(default_factory=dict, repr=False)
-    # documentos aceites que passaram pela tabela: com mode overwrite e zero linhas, a tabela fica vazia (é o que
-    # o lote diz); sem nenhum documento, o lote não diz nada sobre ela e não se lhe toca
+    # accepted documents that went through the table: with mode overwrite and zero rows, the table becomes empty (that
+    # is what the batch says); with no document, the batch says nothing about it and it is left alone
     documents: set[int] = field(default_factory=set, repr=False)
 
 
 ISO_DATETIME = T.ISO_DATETIME
-MAX_DEPTH = 64   # níveis de aninhamento; os modelos Catena-X ficam muito abaixo (PCF 9.0: ~12)
+MAX_DEPTH = 64   # nesting levels; Catena-X models stay far below (PCF 9.0: ~12)
 _SURROGATE = re.compile("[\ud800-\udfff]")
 NUMERIC_TYPES = ("int", "bigint", "smallint", "tinyint", "double", "float")
 
@@ -140,38 +140,38 @@ def _numeric_base(t: str) -> bool:
 
 
 def _numeric_texts(v: Any, t: str | None) -> list[str]:
-    """Textos que vão ser lidos como número (coluna numérica ou array de números): para o relatório."""
+    """Texts that will be read as numbers (numeric column or array of numbers): for the report."""
     if not t or not isinstance(v, (str, list)) or not _numeric_base(t):
         return []
     return [x for x in (v if isinstance(v, list) else [v]) if isinstance(x, str)]
 
 
 def document_problem(data: Any) -> str | None:
-    """Razão para um documento não poder seguir tal como está, ou None.
+    """Why a document cannot go on as it is, or None.
 
-    Profundidade acima de MAX_DEPTH (protege as funções recursivas e a carga inteira), números não finitos
-    (NaN, inf: um documento construído em código ou colado no studio) e texto com surrogates isolados
-    ('\\ud800': passa no motor mas não pode ser gravado em UTF-8 — falharia só na escrita).
-    Percurso iterativo; o caminho só é calculado (2.ª passagem) quando há problema.
+    Depth above MAX_DEPTH (protects the recursive functions and the whole load), non-finite numbers
+    (NaN, inf: a document built in code or pasted into the studio) and text with lone surrogates
+    ('\\ud800': passes the engine but cannot be written as UTF-8 — it would only fail at write time).
+    Iterative walk; the path is only computed (2nd pass) when there is a problem.
     """
     def scan(with_path: bool) -> tuple[str, str] | None:
         stack: list[tuple[Any, int, str]] = [(data, 0, "")]
         while stack:
             obj, depth, path = stack.pop()
             if depth >= MAX_DEPTH:
-                return f"mais de {MAX_DEPTH} níveis de aninhamento", path
+                return f"more than {MAX_DEPTH} levels of nesting", path
             items = obj.items() if isinstance(obj, dict) else enumerate(obj)
             for k, v in items:
                 if isinstance(k, str) and not k.isascii() and _SURROGATE.search(k):
-                    return "chave com um carácter UTF-16 isolado (ex.: \\ud800), que não pode ser gravado em UTF-8", path
+                    return "key with a lone UTF-16 character (e.g. \\ud800), which cannot be written as UTF-8", path
                 sub = "" if not with_path else (f"{path}.{k}" if path else str(k)) if isinstance(obj, dict) else f"{path}[{k}]"
                 if isinstance(v, (dict, list)):
                     stack.append((v, depth + 1, sub))
                 elif isinstance(v, str):
                     if not v.isascii() and _SURROGATE.search(v):
-                        return "texto com um carácter UTF-16 isolado (ex.: \\ud800), que não pode ser gravado em UTF-8", sub
+                        return "text with a lone UTF-16 character (e.g. \\ud800), which cannot be written as UTF-8", sub
                 elif isinstance(v, float) and not math.isfinite(v):
-                    return f"número não finito ({v})", sub
+                    return f"non-finite number ({v})", sub
         return None
 
     if not isinstance(data, (dict, list)):
@@ -179,20 +179,20 @@ def document_problem(data: Any) -> str | None:
     if scan(False) is None:
         return None
     reason, path = scan(True)
-    path = path or "(raiz)"
-    return f"{reason} em '{path if len(path) <= 120 else path[:120] + '…'}'"
+    path = path or "(root)"
+    return f"{reason} at '{path if len(path) <= 120 else path[:120] + '…'}'"
 
 
 class RowError(Exception):
-    """A linha é ignorada (skip_row declarado); o evento já está no relatório."""
+    """The row is skipped (skip_row declared); the event is already in the report."""
 
 
 class _Quiet(Exception):
-    """Problema num cálculo silencioso (chave do replace_by ao nível do documento)."""
+    """Problem in a silent computation (replace_by key at document level)."""
 
 
 class _ValueFailed(Exception):
-    """Valor inválido sem perda declarada; o erro já está no relatório e o documento fica rejeitado."""
+    """Invalid value with no declared loss; the error is already in the report and the document is rejected."""
 
 
 class TransformError(ValueError):
@@ -200,38 +200,38 @@ class TransformError(ValueError):
 
 
 class TemplateIncomplete(ValueError):
-    """Template com só algumas partes em falta, sem template_missing declarado."""
+    """Template with only some parts missing, and no template_missing declared."""
 
     reason = "template_missing"
 
 
 class MissingElements(PathError):
-    """Um [*]/filtro com elementos sem o campo, numa coluna sem `missing_elements` declarado (ou numa chave)."""
+    """A [*]/filter with elements that lack the field, in a column without `missing_elements` declared (or in a key)."""
 
     reason = "missing_elements"
 
 
 class DocumentsRejected(TransformError):
-    """Um ou mais documentos têm erros. `results` tem as linhas dos restantes; `report` tem os detalhes."""
+    """One or more documents have errors. `results` has the rows of the others; `report` has the details."""
 
     def __init__(self, report: Report, results: dict[str, "TableResult"]):
         self.report, self.results = report, results
         msgs = report.error_messages(10)
-        more = f"\n  … (+{report.errors - len(msgs)} erro(s))" if report.errors > len(msgs) else ""
-        super().__init__(f"{len(report.rejected)} documento(s) rejeitado(s); nada deles foi escrito. Erros:\n  "
+        more = f"\n  … (+{report.errors - len(msgs)} error(s))" if report.errors > len(msgs) else ""
+        super().__init__(f"{len(report.rejected)} document(s) rejected; none of their rows was written. Errors:\n  "
                          + "\n  ".join(msgs) + more)
 
 
-# --- condições: ver conditions.py (validadas na carga, comparadas com tipo) --------
+# --- conditions: see conditions.py (validated at load time, compared with their type) --------
 
 
-# --- matching de submodelos ---------------------------------------------
+# --- submodel matching -------------------------------------------------
 def matches(sub: SubmodelSpec, doc: Document) -> bool:
     return _match(sub.match, doc)
 
 
 def _match(m: dict, doc: Document) -> bool:
-    """Todos os critérios têm de passar; `any: [{...}, {...}]` passa se um dos blocos passar."""
+    """Every criterion must pass; `any: [{...}, {...}]` passes if one of the blocks passes."""
     if not m:
         return True
     if "any" in m and not any(_match(x, doc) for x in m["any"]):
@@ -252,24 +252,24 @@ def _match(m: dict, doc: Document) -> bool:
                 return False
         return evaluate(m.get("where"), ctx)
     except PathError:
-        return False   # o documento tem outra forma (ex.: outra versão do modelo): não corresponde
+        return False   # the document has another shape (e.g. another version of the model): no match
 
 
-# --- motor ---------------------------------------------------------------
+# --- engine ----------------------------------------------------------------
 class Engine:
-    """Aplica a configuração a documentos.
+    """Applies the configuration to documents.
 
-    Os erros não param no primeiro: cada documento com erros é rejeitado por inteiro (nenhuma linha dele,
-    em nenhuma tabela) e tudo fica em `self.report`. `run()` lança `DocumentsRejected` se houver documentos
-    rejeitados; com `partial=True` devolve as linhas dos restantes (quem chama decide o que escrever).
-    Erros de configuração e de lote (ex.: limite de erros) lançam sempre excepção e não devolvem nada.
+    Errors do not stop at the first one: each document with errors is rejected as a whole (none of its rows,
+    in any table) and everything goes into `self.report`. `run()` raises `DocumentsRejected` if there are rejected
+    documents; with `partial=True` it returns the rows of the others (the caller decides what to write).
+    Configuration and batch errors (e.g. the error limit) always raise and return nothing.
     """
 
     def __init__(self, config: Config, match_all: bool | None = None, report: Report | None = None):
         self.config = config
         self.match_all = config.input.get("match_all", False) if match_all is None else match_all
         self.ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        self.validation: list[dict[str, Any]] = []   # documentos que não cumprem o schema do modelo
+        self.validation: list[dict[str, Any]] = []   # documents that do not match the model's schema
         self.report = report if report is not None else Report()
 
     def route(self, docs: Iterable[Document]) -> dict[str, list[Document]]:
@@ -283,18 +283,18 @@ class Engine:
                     if not self.match_all:
                         break
             if not hit:
-                log.warning("Nenhum submodelo da configuração corresponde a %s (semantic_id=%s)", doc.source_file, doc.semantic_id)
+                log.warning("No submodel in the configuration matches %s (semantic_id=%s)", doc.source_file, doc.semantic_id)
         return routed
 
     def run(self, docs: Iterable[Document], partial: bool = False) -> dict[str, TableResult]:
         settings = {"naive_timestamps": self.config.input.get("naive_timestamps", "fail")}
         try:
             with N.scope(settings) as notes:
-                self._notes = notes       # notas das conversões (perdas declaradas, avisos) de cada valor
+                self._notes = notes       # notes from the conversions (declared losses, warnings) of each value
                 results = self._run(docs)
         except ReportLimit as e:
             self.report.failure = str(e)
-            err = TransformError(f"{e}. Primeiros erros:\n  " + "\n  ".join(self.report.error_messages(10)))
+            err = TransformError(f"{e}. First errors:\n  " + "\n  ".join(self.report.error_messages(10)))
             err.report = self.report
             raise err from None
         except (ConfigError, TransformError) as e:
@@ -307,10 +307,10 @@ class Engine:
 
     def _run(self, docs: Iterable[Document]) -> dict[str, TableResult]:
         rep = self.report
-        # número de sequência de cada documento nesta carga: identifica-o mesmo depois do unwrap/document_id
+        # sequence number of each document in this load: identifies it even after unwrap/document_id
         docs = [dataclasses.replace(d, meta={**d.meta, "_seq": (rep.documents + i)}) for i, d in enumerate(docs)]
         rep.documents += len(docs)
-        self._doc_info = {d.meta["_seq"]: (d.source_file, d.index) for d in docs}   # 1 entrada por documento
+        self._doc_info = {d.meta["_seq"]: (d.source_file, d.index) for d in docs}   # 1 entry per document
         readable = []
         for d in docs:
             if d.error is not None:
@@ -322,17 +322,17 @@ class Engine:
             else:
                 readable.append(d)
         routed = self.route(readable)
-        self._notes.clear()           # notas das condições do match não descrevem valores gravados
+        self._notes.clear()           # notes from the match conditions do not describe stored values
         matched = {id(d) for ds in routed.values() for d in ds}
         skip_unmatched = self.config.input.get("on_unmatched", "fail") == "skip"
         for d in readable:
             if id(d) not in matched:
-                msg = f"nenhum submodelo da configuração corresponde (semantic_id={d.semantic_id})"
+                msg = f"no submodel in the configuration matches (semantic_id={d.semantic_id})"
                 if skip_unmatched:
                     self._doc_event(d, "declared", "no_submodel", "ignored", msg)
                 else:
                     self._doc_event(d, "error", "no_submodel", "document_rejected",
-                                    msg + "; declare input.on_unmatched: skip para o ignorar")
+                                    msg + "; declare input.on_unmatched: skip to ignore it")
         results: dict[str, TableResult] = {}
         for sub in self.config.submodels:
             sub_docs = routed[sub.name]
@@ -350,25 +350,25 @@ class Engine:
                 if sub_docs and sub.auto_normalize.get("children") == "batch" and generated[0].mode != "append":
                     children = [t.name for t in generated[1:]]
                     rep.add("declared", "children_from_batch", "not_deleted",
-                            f"auto_normalize.children: batch — tabelas filhas só das listas presentes neste lote "
-                            f"({children or 'nenhuma'}); as de uma lista que ficou vazia em todos os documentos do lote "
-                            f"não foram apagadas nem substituídas", table=generated[0].name)
+                            f"auto_normalize.children: batch — child tables only from the lists present in this batch "
+                            f"({children or 'none'}); those of a list that was empty in every document of the batch "
+                            f"were neither deleted nor replaced", table=generated[0].name)
             if sub.document_id:
                 tables = [_with_column(t, ColumnSpec(sub.document_id["column"], path="$meta.document_id", type="string"))
                           for t in tables]
             for spec in tables:
                 res = results.setdefault(spec.name, TableResult(spec))
                 if spec not in res.specs:
-                    res.specs.append(spec)          # a configuração garante que concordam (modo, chaves, tipos)
+                    res.specs.append(spec)          # the configuration ensures they agree (mode, keys, types)
                 for doc in sub_docs:
                     self._rows_for(spec, doc, res)
         for name, res in results.items():
-            self._check_duplicates(res)   # chave repetida no mesmo documento: erro (ou on_duplicate declarado)
-            self._cast_inferred(res)      # pode rejeitar documentos (valor que não cabe no tipo inferido)
+            self._check_duplicates(res)   # repeated key in the same document: error (or on_duplicate declared)
+            self._cast_inferred(res)      # may reject documents (a value that does not fit the inferred type)
         rejected = set(rep.rejected)
         for name, res in results.items():
             dropped = 0
-            res.replace_keys = {d: k for d, k in res.replace_keys.items() if d not in rejected}   # rejeitado: não apaga
+            res.replace_keys = {d: k for d, k in res.replace_keys.items() if d not in rejected}   # rejected: deletes nothing
             res.documents -= rejected
             if rejected:
                 keep = [i for i, d in enumerate(res.origins.docs) if d not in rejected]
@@ -380,22 +380,22 @@ class Engine:
                 self._finalize(res)
             except (ConfigError, TransformError):
                 raise
-            except Exception as e:  # noqa: BLE001 - erro ao nível da tabela (tipos inferidos), não de um documento
-                raise TransformError(f"tabela '{name}': {e}") from e
+            except Exception as e:  # noqa: BLE001 - a table-level error (inferred types), not a document's
+                raise TransformError(f"table '{name}': {e}") from e
             rep.tables[name] = {"rows": len(res.rows), "rows_from_rejected_documents": dropped}
         return results
 
-    # --- eventos do relatório --------------------------------------------
+    # --- report events --------------------------------------------
     def _doc_event(self, doc: Document, kind: str, reason: str, action: str, message: str) -> None:
-        """Evento ao nível do documento (sem tabela/coluna)."""
+        """Event at document level (no table/column)."""
         self.report.add(kind, reason, action, message, file=doc.source_file, document=doc.index,
                         doc_key=doc.meta.get("_seq"))
 
     def _event(self, kind: str, reason: str, action: str, message: str, spec: TableSpec, ctx: Context,
                column: str | None = None, value: Any = NO_VALUE) -> bool:
-        """Evento ao nível de uma linha: documento actual, posição no explode, tabela e coluna.
+        """Event at row level: current document, explode position, table and column.
 
-        Devolve True se o evento ficou como exemplo no relatório (só esses vão também para o log).
+        Returns True if the event was kept as an example in the report (only those also go to the log).
         """
         if getattr(self, "_quiet", False):
             return False
@@ -412,14 +412,14 @@ class Engine:
                 kept.append(d)
                 continue
             self.validation.append({"source": d.source_file, "submodel": sub.name, "errors": problems})
-            summary = "; ".join(f"{p['path'] or '(raiz)'}: {p['message']}" for p in problems[:3])
+            summary = "; ".join(f"{p['path'] or '(root)'}: {p['message']}" for p in problems[:3])
             more = f" (+{len(problems) - 3})" if len(problems) > 3 else ""
-            msg = f"não cumpre o schema de '{sub.name}': {summary}{more}"
+            msg = f"does not match the schema of '{sub.name}': {summary}{more}"
             if sub.validate == "fail":
                 self._doc_event(d, "error", "schema", "document_rejected", msg)
                 continue
             if sub.validate == "skip":
-                log.warning("%s %s — documento ignorado", d.source_file, msg)
+                log.warning("%s %s — document ignored", d.source_file, msg)
                 self._doc_event(d, "declared", "schema", "ignored", msg)
                 continue
             log.warning("%s %s", d.source_file, msg)
@@ -438,13 +438,13 @@ class Engine:
                 continue
             for p, n in firsts:
                 self._doc_event(d, "declared", "unwrap_multiple", "first_element",
-                                f"'{p}' tem {n} elementos; usado o primeiro (unwrap on_multiple: first)")
+                                f"'{p}' has {n} elements; the first was used (unwrap on_multiple: first)")
             out.append(dataclasses.replace(d, data=data, meta={**d.meta, "_raw": d.data}))
         return out
 
     def _with_document_id(self, sub: SubmodelSpec, doc: Document) -> Document | None:
         rule = sub.document_id
-        raw = doc.meta.get("_raw", doc.data)  # conteúdo como chegou (antes do unwrap)
+        raw = doc.meta.get("_raw", doc.data)  # content as it arrived (before the unwrap)
         if rule["strategy"] == "random":
             value = str(uuid.uuid4())
         else:
@@ -462,15 +462,15 @@ class Engine:
                                     f"document_id: {e}")
                     return None
                 if missing:
-                    msg = f"document_id: campo(s) {missing} em falta"
+                    msg = f"document_id: field(s) {missing} missing"
                     if rule["on_missing"] != "content":
                         self._doc_event(doc, "error", "document_id_key_missing", "document_rejected",
-                                        msg + "; o UUID mudaria quando o campo aparecesse (linhas duplicadas). "
-                                              "Declare document_id.on_missing: content para usar o conteúdo")
+                                        msg + "; the UUID would change once the field appeared (duplicate rows). "
+                                              "Declare document_id.on_missing: content to use the content")
                         return None
-                    log.warning("%s em %s — usado o conteúdo do documento", msg, doc.source_file)
+                    log.warning("%s in %s — the document's content was used", msg, doc.source_file)
                     self._doc_event(doc, "declared", "document_id_key_missing", "content_hash",
-                                    msg + "; UUID calculado a partir do conteúdo (on_missing: content)")
+                                    msg + "; UUID computed from the content (on_missing: content)")
                 else:
                     name = "key:" + "|".join(json.dumps(p, sort_keys=True, default=str) for p in parts)
             if name is None:
@@ -479,14 +479,14 @@ class Engine:
         meta = {k: v for k, v in doc.meta.items() if k != "_raw"}
         return dataclasses.replace(doc, meta={**meta, "document_id": value})
 
-    # --- geração de linhas -----------------------------------------------
+    # --- row generation -----------------------------------------------
     def _contexts(self, ctx: Context, levels: list[str], keep_empty: bool) -> Iterator[Context]:
         if not levels:
             yield ctx
             return
         val = resolve(ctx, levels[0])
         if val is not MISSING and val is not None and not isinstance(val, (list, dict)):
-            raise PathShapeError(f"explode '{levels[0]}': esperada uma lista (ou objecto), encontrado {type(val).__name__} {val!r}")
+            raise PathShapeError(f"explode '{levels[0]}': expected a list (or object), found {type(val).__name__} {val!r}")
         items = [] if val is MISSING or val is None else val if isinstance(val, list) else [val]
         if not items and keep_empty:
             yield from self._contexts(ctx.child({}, None), levels[1:], keep_empty)
@@ -503,17 +503,17 @@ class Engine:
             return
         try:
             for ctx in self._contexts(root, spec.explode, spec.keep_empty):
-                # notas fora de um valor (ex.: datas comparadas no where) não são guardadas: sem isto acumulavam
-                # uma por linha durante a carga inteira
+                # notes outside a value (e.g. dates compared in the where) are not kept: without this they would pile
+                # up, one per row, for the whole load
                 self._notes.clear()
                 try:
                     keep = evaluate(spec.where, ctx)
                     if not keep:
-                        self._event("declared", "where_false", "row_not_generated", "linha excluída pelo where da tabela",
+                        self._event("declared", "where_false", "row_not_generated", "row excluded by the table's where",
                                     spec, ctx)
                         continue
                     row = self._row(spec, ctx)
-                except PathError as e:    # caminho do where com a forma errada: on_error da tabela ('null' não se aplica)
+                except PathError as e:    # where path with the wrong shape: the table's on_error ('null' does not apply)
                     try:
                         self._problem(spec, "(where)", ctx, NO_VALUE, str(e),
                                       "skip_row" if spec.on_error == "skip_row" else "fail", e.reason)
@@ -524,14 +524,14 @@ class Engine:
                     continue
                 except RowError as e:
                     res.skipped += 1
-                    log.debug("Linha ignorada em %s: %s", spec.name, e)
+                    log.debug("Row skipped in %s: %s", spec.name, e)
                     continue
                 except _ValueFailed:
                     continue
                 if (null_keys := [k for k in _key_columns(spec) if row.get(k) is None]):
                     try:
                         self._problem(spec, null_keys[0], ctx, NO_VALUE,
-                                      f"chave nula ({', '.join(null_keys)}): a linha não pode ser identificada",
+                                      f"null key ({', '.join(null_keys)}): the row cannot be identified",
                                       _key_on_error(spec, null_keys), "null_key")
                     except RowError:
                         res.skipped += 1
@@ -541,13 +541,13 @@ class Engine:
                 res.rows.append(row)
                 res.origins.append(doc.meta.get("_seq", -1), tuple(spec.explode), tuple(idx for _, idx in ctx.stack[1:]))
         except PathError as e:
-            # o explode não tem a forma do documento: nenhuma linha desta tabela é fiável -> documento rejeitado
+            # the explode does not fit the document's shape: no row of this table can be trusted -> document rejected
             self.report.add("error", e.reason, "document_rejected", str(e), table=spec.name, file=doc.source_file,
                             document=doc.index, doc_key=doc.meta.get("_seq"))
 
     def _replace_key(self, spec: TableSpec, doc: Document, root: Context, res: TableResult) -> bool:
-        """Chave do replace_by calculada ao nível do documento (as colunas são de $root/$meta, validado na carga).
-        Sem ela, um documento cuja lista ficou vazia não apagava as linhas antigas. False = documento rejeitado."""
+        """replace_by key computed at document level (the columns come from $root/$meta, validated at load time).
+        Without it, a document whose list became empty did not delete the old rows. False = document rejected."""
         ctx = root
         for _ in spec.explode:
             ctx = ctx.child({}, None)
@@ -557,14 +557,14 @@ class Engine:
         try:
             key = tuple(self._value_inner(spec, cols[name], ctx) for name in spec.replace_by)
             problem = None if all(v is not None for v in key) else \
-                f"replace_by: {', '.join(n for n, v in zip(spec.replace_by, key) if v is None)} nulo(s) neste documento"
+                f"replace_by: {', '.join(n for n, v in zip(spec.replace_by, key) if v is None)} null in this document"
         except (_Quiet, RowError, _ValueFailed, ValueError) as e:
-            problem = f"replace_by: não foi possível calcular a chave do documento: {e}"
+            problem = f"replace_by: the document's key could not be computed: {e}"
         finally:
             self._quiet = False
             del self._notes[start:]
         if problem:
-            self.report.add("error", "null_key", "document_rejected", problem + " (as linhas antigas não seriam apagadas)",
+            self.report.add("error", "null_key", "document_rejected", problem + " (the old rows would not be deleted)",
                             table=spec.name, file=doc.source_file, document=doc.index, doc_key=doc.meta.get("_seq"))
             return False
         res.replace_keys[doc.meta.get("_seq", -1)] = key
@@ -572,7 +572,7 @@ class Engine:
 
     def _row(self, spec: TableSpec, ctx: Context) -> dict[str, Any]:
         row: dict[str, Any] = {}
-        failed = False  # continua nas outras colunas para o relatório mostrar todos os erros da linha
+        failed = False  # carries on with the other columns so the report shows every error of the row
         for col in spec.columns:
             try:
                 row[col.name] = self._value(spec, col, ctx)
@@ -586,12 +586,12 @@ class Engine:
                     spec.leaf_names if spec.auto_naming == "leaf" else None)
                 for name, dotted in outside:
                     self._event("warning", "outside_model", "full_name",
-                                f"o campo '{dotted}' não está no modelo: vai para a coluna '{name}' (nome completo; os "
-                                f"nomes leaf são fixados pelo model.schema)", spec, ctx, name)
+                                f"field '{dotted}' is not in the model: it goes to column '{name}' (full name; "
+                                f"leaf names are fixed by model.schema)", spec, ctx, name)
                 for name, first, second in collisions:
                     try:
-                        self._problem(spec, name, ctx, NO_VALUE, f"os campos '{first}' e '{second}' dão a mesma coluna "
-                                      f"'{name}'; exclua um com auto_exclude ou declare colunas explícitas",
+                        self._problem(spec, name, ctx, NO_VALUE, f"fields '{first}' and '{second}' give the same column "
+                                      f"'{name}'; exclude one with auto_exclude or declare explicit columns",
                                       "skip_row" if spec.on_error == "skip_row" else "fail", "auto_collision")
                     except _ValueFailed:
                         failed = True
@@ -600,19 +600,19 @@ class Engine:
                 for name, val in fields.items():
                     if name in row:
                         if _same_source(explicit_cols.get(name), sources[name], level):
-                            continue                 # a coluna explícita substitui este campo (mesma origem)
+                            continue                 # the explicit column replaces this field (same source)
                         if spec.auto_collision == "prefix" and f"item_{name}" not in row:
                             name = f"item_{name}"
                         elif spec.auto_collision == "skip":
                             self._event("declared", "auto_collision", "auto_skipped",
-                                        f"o campo '{sources[name]}' não entra: a coluna '{name}' já existe (auto_collision: skip)",
+                                        f"field '{sources[name]}' is left out: column '{name}' already exists (auto_collision: skip)",
                                         spec, ctx, name)
                             continue
                         else:
                             try:
                                 self._problem(spec, name, ctx, NO_VALUE,
-                                              f"o campo '{sources[name]}' dá a coluna '{name}', que já existe com outra "
-                                              f"origem; declare auto_collision: prefix (item_{name}) ou skip",
+                                              f"field '{sources[name]}' gives column '{name}', which already exists with another "
+                                              f"source; declare auto_collision: prefix (item_{name}) or skip",
                                               "skip_row" if spec.on_error == "skip_row" else "fail", "auto_collision")
                             except _ValueFailed:
                                 failed = True
@@ -637,7 +637,7 @@ class Engine:
                         del self._notes[start:]
                     row[name] = val
             elif obj is not None and "value" not in row:
-                row["value"] = obj  # lista de escalares explodida
+                row["value"] = obj  # exploded list of scalars
         if failed:
             raise _ValueFailed
         if "record_hash" in spec.metadata_columns:
@@ -649,16 +649,16 @@ class Engine:
 
     def _problem(self, spec: TableSpec, column: str, ctx: Context, raw: Any, message: str, on_error: str,
                  reason: str) -> Any:
-        """Valor que não pode ser gravado tal como veio: aplica o on_error e regista o evento.
+        """A value that cannot be stored as it came: applies on_error and records the event.
 
-        null -> anula (declarado); skip_row -> ignora a linha (declarado); fail -> erro, documento rejeitado.
+        null -> set to null (declared); skip_row -> skips the row (declared); fail -> error, document rejected.
         """
         self._value_problem = True
         if getattr(self, "_quiet", False):
             raise _Quiet(message)
         if on_error == "null":
             if self._event("declared", reason, "nulled", message, spec, ctx, column, raw):
-                log.warning("Valor anulado — tabela '%s', coluna '%s', ficheiro '%s', valor %r: %s",
+                log.warning("Value set to null — table '%s', column '%s', file '%s', value %r: %s",
                             spec.name, column, ctx.meta.get("source_file"), raw, message)
             return None
         if on_error == "skip_row":
@@ -673,7 +673,7 @@ class Engine:
         self._value_problem = False
         try:
             v = self._value_inner(spec, col, ctx)
-            if not self._value_problem:   # um valor anulado/ignorado não deixa as notas do que se calculou antes
+            if not self._value_problem:   # a value set to null/skipped does not keep the notes of what was computed before
                 for kind, reason, action, message in notes[start:]:
                     self._event(kind, reason, action, message, spec, ctx, col.name)
             return v
@@ -699,22 +699,22 @@ class Engine:
             if col.type and not T.needs_inference(col.type):
                 v = T.cast(v, col.type, col.rounding)
         except ConfigError:
-            raise  # erro da configuração (ex.: operador desconhecido): pára a carga, não é um problema do valor
-        except Exception as e:  # noqa: BLE001 - erros dos dados ou das regras do utilizador
+            raise  # configuration error (e.g. unknown operator): stops the load, it is not a problem with the value
+        except Exception as e:  # noqa: BLE001 - errors in the data or in the user's rules
             return self._problem(spec, col.name, ctx, raw, str(e), on_error, getattr(e, "reason", "invalid_value"))
         if defaulted:
-            self._event("declared", "missing_value", "default_applied", f"valor em falta; usado o default {col.default!r}",
+            self._event("declared", "missing_value", "default_applied", f"missing value; default {col.default!r} used",
                         spec, ctx, col.name, raw)
         if texts:
             if any(not t.strip(" \t\r\n") for t in texts):
-                self._event("warning", "empty_text", "nulled", f"texto vazio numa coluna {col.type}: fica nulo",
+                self._event("warning", "empty_text", "nulled", f"empty text in a {col.type} column: becomes null",
                             spec, ctx, col.name, raw)
             if any(t.strip(" \t\r\n") for t in texts):
-                self._event("warning", "number_as_text", "kept", f"número recebido como texto e lido como {v!r}",
+                self._event("warning", "number_as_text", "kept", f"number received as text and read as {v!r}",
                             spec, ctx, col.name, raw)
         if col.required and v is None:
-            # obrigatório: 'null' não se aplica (anular um obrigatório não faz sentido) -> falha
-            return self._problem(spec, col.name, ctx, raw, "coluna obrigatória vazia",
+            # required: 'null' does not apply (setting a required value to null makes no sense) -> fails
+            return self._problem(spec, col.name, ctx, raw, "required column is empty",
                                  "skip_row" if on_error == "skip_row" else "fail", "required_empty")
         if col.check:
             v = self._check(spec, col, v, ctx)
@@ -723,11 +723,11 @@ class Engine:
         return v
 
     def _source(self, spec: TableSpec, col: ColumnSpec, src: ColumnSpec, ctx: Context) -> Any:
-        """Origem do valor (`src` é a coluna ou um caso do `cases`).
+        """Source of the value (`src` is the column or one of the `cases`).
 
-        Template com TODAS as partes em falta: nulo, como um campo ausente (nada se perde). Com só ALGUMAS em
-        falta, as partes presentes perder-se-iam (nulo) ou o valor ficaria errado ('P|', igual para todos os
-        elementos sem a parte): erro, a não ser com `template_missing: empty` (partes vazias) ou `null` (contado).
+        Template with ALL parts missing: null, like an absent field (nothing is lost). With only SOME
+        missing, the present parts would be lost (null) or the value would be wrong ('P|', the same for every
+        element without the part): error, unless `template_missing: empty` (empty parts) or `null` (counted).
         """
         if src.template is None:
             return _source(src, ctx)
@@ -736,36 +736,36 @@ class Engine:
             return text
         if len(missing) == total:
             return None
-        msg = f"template {src.template!r}: sem valor para {', '.join(missing)}"
+        msg = f"template {src.template!r}: no value for {', '.join(missing)}"
         if col.template_missing == "empty":
-            self._event("declared", "template_missing", "rendered_empty", msg + " (ficaram vazias)", spec, ctx, col.name)
+            self._event("declared", "template_missing", "rendered_empty", msg + " (left empty)", spec, ctx, col.name)
             return text
         if col.template_missing == "null":
-            self._event("declared", "template_missing", "nulled", msg + " (valor nulo)", spec, ctx, col.name)
+            self._event("declared", "template_missing", "nulled", msg + " (null value)", spec, ctx, col.name)
             return None
-        raise TemplateIncomplete(msg + "; as partes presentes perder-se-iam: declare template_missing: empty ou null")
+        raise TemplateIncomplete(msg + "; the present parts would be lost: declare template_missing: empty or null")
 
     def _elements(self, spec: TableSpec, col: ColumnSpec, ctx: Context, raw: Any) -> Any:
-        """Resultado de um [*]/filtro: se há elementos sem o campo, só segue com `missing_elements` declarado.
+        """Result of a [*]/filter: if some elements lack the field, it only goes on with `missing_elements` declared.
 
-        skip -> só os valores encontrados (como antes); null -> um nulo por elemento em falta. Sem declaração é
-        erro: first/last/join/count/sum/arrays dariam resultados diferentes consoante a interpretação.
+        skip -> only the values found (as before); null -> one null per missing element. Without a declaration it is
+        an error: first/last/join/count/sum/arrays would give different results depending on the interpretation.
         """
         if not isinstance(raw, Projection):
             return raw
         if raw.missing:
-            msg = f"'{raw.path}': {raw.missing} de {len(raw.slots)} elemento(s) sem o campo"
+            msg = f"'{raw.path}': {raw.missing} of {len(raw.slots)} element(s) without the field"
             if col.missing_elements is None:
-                raise MissingElements(f"{msg}; declare missing_elements: skip (ignorar esses elementos) "
-                                      f"ou null (um nulo por elemento)")
+                raise MissingElements(f"{msg}; declare missing_elements: skip (ignore those elements) "
+                                      f"or null (one null per element)")
             action = "element_skipped" if col.missing_elements == "skip" else "element_nulled"
             self._event("declared", "missing_elements", action, msg, spec, ctx, col.name, raw.slots)
             return list(raw) if col.missing_elements == "skip" else list(raw.slots)
         return list(raw)
 
     def _check_duplicates(self, res: TableResult) -> None:
-        """A mesma chave duas vezes no MESMO documento é um conflito nos dados (ex.: o mesmo filho duas vezes num
-        BOM, com quantidades diferentes): erro, a não ser com on_duplicate: last | first (contado)."""
+        """The same key twice in the SAME document is a conflict in the data (e.g. the same child twice in a
+        BOM, with different quantities): error, unless on_duplicate: last | first (counted)."""
         spec = res.spec
         if not spec.keys or not spec.dedupe or len(res.origins) != len(res.rows):
             return
@@ -780,11 +780,11 @@ class Engine:
             first = seen[key]
             file, index = self._doc_info.get(doc, (None, None))
             keys = {k: r.get(k) for k in spec.keys}
-            where = f"{res.origins.locator(first) or '(documento)'} e {res.origins.locator(i) or '(documento)'}"
+            where = f"{res.origins.locator(first) or '(document)'} and {res.origins.locator(i) or '(document)'}"
             if spec.on_duplicate is None:
                 self.report.add("error", "duplicate_key", "document_rejected",
-                                f"a mesma chave aparece duas vezes no mesmo documento ({where}); declare on_duplicate: "
-                                f"last | first se for de esperar", table=spec.name, file=file, document=index,
+                                f"the same key appears twice in the same document ({where}); declare on_duplicate: "
+                                f"last | first if that is expected", table=spec.name, file=file, document=index,
                                 row=res.origins.locator(i), keys=keys, doc_key=doc)
                 continue
             loser = first if spec.on_duplicate == "last" else i
@@ -792,7 +792,7 @@ class Engine:
                 seen[key] = i
             drop.add(loser)
             self.report.add("declared", "duplicate_key", "row_removed",
-                            f"chave repetida no mesmo documento ({where}); fica a {'última' if spec.on_duplicate == 'last' else 'primeira'}",
+                            f"repeated key in the same document ({where}); the {'last' if spec.on_duplicate == 'last' else 'first'} one is kept",
                             table=spec.name, file=file, document=index, row=res.origins.locator(loser), keys=keys)
         if drop:
             keep = [i for i in range(len(res.rows)) if i not in drop]
@@ -800,8 +800,8 @@ class Engine:
             res.origins = res.origins.select(keep)
 
     def _cast_inferred(self, res: TableResult) -> None:
-        """Colunas `type: struct` / `array<struct>`: estrutura inferida das linhas (dos documentos não rejeitados) e
-        cast de cada valor; um valor que não serve rejeita o seu documento (e não a carga inteira)."""
+        """`type: struct` / `array<struct>` columns: structure inferred from the rows (of the documents not rejected) and
+        a cast of each value; a value that does not fit rejects its document (not the whole load)."""
         spec = res.spec
         res.inferred = {}
         rejected = set(self.report.rejected)
@@ -815,7 +815,7 @@ class Engine:
             for i in keep:
                 v = res.rows[i].get(col.name)
                 if T.parse(t)[0] == "struct" and isinstance(v, list) and len(v) == 1:
-                    v = v[0]  # lista 1:1
+                    v = v[0]  # 1:1 list
                 tree = T.merge(tree, T.infer_deep(v))
             if T.parse(t)[0] == "array" and isinstance(tree, tuple) and tree[0] != "array":
                 tree = ("array", tree)
@@ -828,7 +828,7 @@ class Engine:
                 except (ValueError, TypeError) as e:
                     doc = res.origins.docs[i] if len(res.origins) == len(res.rows) else None
                     file, index = self._doc_info.get(doc, (None, None))
-                    self.report.add("error", "invalid_value", "document_rejected", f"{e} (tipo inferido {final})",
+                    self.report.add("error", "invalid_value", "document_rejected", f"{e} (inferred type {final})",
                                     table=spec.name, column=col.name, file=file, document=index,
                                     row=res.origins.locator(i) if doc is not None else None,
                                     value=r.get(col.name), doc_key=doc)
@@ -838,7 +838,7 @@ class Engine:
     def _check(self, spec: TableSpec, col: ColumnSpec, v: Any, ctx: Context) -> Any:
         try:
             problem = check_value(col.check, v, ctx)
-        except PathError as e:    # caminho do required_if com a forma errada
+        except PathError as e:    # required_if path with the wrong shape
             return self._problem(spec, col.name, ctx, v, str(e), col.on_error or spec.on_error, e.reason)
         if problem is None:
             return v
@@ -848,12 +848,12 @@ class Engine:
         action = col.check["on_fail"]
         if action == "warn":
             if self._event("warning", "check", "kept", problem, spec, ctx, col.name, v):
-                log.warning("check falhou — tabela '%s', coluna '%s', ficheiro '%s': %s",
+                log.warning("check failed — table '%s', column '%s', file '%s': %s",
                             spec.name, col.name, ctx.meta.get("source_file"), problem)
             return v
         return self._problem(spec, col.name, ctx, v, problem, action, "check")
 
-    # --- tipos, dedupe ----------------------------------------------------
+    # --- types, dedupe ----------------------------------------------------
     def _finalize(self, res: TableResult):
         spec = res.spec
         origins = res.origins if len(res.origins) == len(res.rows) else None
@@ -884,7 +884,7 @@ class Engine:
             if meta:
                 types[name] = meta
                 continue
-            seen: dict[str, int] = {}       # tipo inferido -> 1.ª linha com esse tipo
+            seen: dict[str, int] = {}       # inferred type -> 1st row with that type
             for i, r in enumerate(res.rows):
                 t = _infer_untyped(r.get(name))
                 if t is not None:
@@ -894,20 +894,20 @@ class Engine:
             elif seen:
                 types[name] = next(iter(seen))
             elif name in protected:
-                types[name] = "string"      # chave/partição só com nulos: fica, com o tipo de sempre
+                types[name] = "string"      # key/partition with only nulls: kept, with the usual type
             else:
-                omitted.append(name)        # sem tipo e só nulos: o tipo seria adivinhado; a coluna não é criada
+                omitted.append(name)        # untyped and only nulls: the type would be guessed; the column is not created
         if conflicts:
             lines = []
             for name, seen in conflicts[:10]:
-                ex = "; ".join(f"{t} ({_where_text(where(i))} valor {short_value(res.rows[i].get(name))})"
+                ex = "; ".join(f"{t} ({_where_text(where(i))} value {short_value(res.rows[i].get(name))})"
                                for t, i in list(seen.items())[:4])
-                lines.append(f"coluna '{name}' sem tipo recebe valores de tipos diferentes: {ex}")
-            raise TransformError(f"tabela '{spec.name}': " + " | ".join(lines)
-                                 + ". Declare o type da coluna (os valores que não servirem são rejeitados por documento).")
+                lines.append(f"untyped column '{name}' receives values of different types: {ex}")
+            raise TransformError(f"table '{spec.name}': " + " | ".join(lines)
+                                 + ". Declare the column's type (values that do not fit are rejected per document).")
         for name in omitted:
             self.report.add("warning", "untyped_all_null", "column_omitted",
-                            "coluna sem tipo e só com nulos neste lote: não é criada (o tipo seria adivinhado)",
+                            "untyped column with only nulls in this batch: not created (the type would be guessed)",
                             table=spec.name, column=name)
             for r in res.rows:
                 r.pop(name, None)
@@ -919,9 +919,9 @@ class Engine:
                     r.setdefault(name, None)
         missing = [k for k in spec.keys + spec.replace_by if k not in types]
         if missing:
-            raise ConfigError(f"Tabela '{spec.name}': colunas-chave {missing} não existem. Colunas: {list(types)}")
+            raise ConfigError(f"Table '{spec.name}': key columns {missing} do not exist. Columns: {list(types)}")
         if spec.keys:
-            # chaves nulas já foram tratadas por linha (_rows_for); aqui só duplicados ENTRE documentos do lote
+            # null keys were already handled per row (_rows_for); here only duplicates BETWEEN documents of the batch
             if spec.dedupe:
                 uniq: dict[tuple, int] = {}
                 for i, r in enumerate(res.rows):
@@ -930,13 +930,13 @@ class Engine:
                         new = where(i)
                         self.report.add(
                             "warning", "duplicate_key", "row_replaced",
-                            f"a mesma chave noutro documento do lote: fica a de {new.get('file')}"
+                            f"the same key in another document of the batch: the one from {new.get('file')}"
                             + (f"#{new['document']}" if new.get("document") is not None else "")
-                            + (f" {new['row']}" if new.get("row") else "") + " (a última, como no merge)",
+                            + (f" {new['row']}" if new.get("row") else "") + " is kept (the last one, as in merge)",
                             table=spec.name, keys={k: r.get(k) for k in spec.keys}, **where(uniq[key]))
                     uniq[key] = i
                 if len(uniq) < len(res.rows):
-                    log.info("Tabela '%s': %d duplicado(s) removido(s)", spec.name, len(res.rows) - len(uniq))
+                    log.info("Table '%s': %d duplicate(s) removed", spec.name, len(res.rows) - len(uniq))
                     keep = list(uniq.values())
                     res.rows = [res.rows[i] for i in keep]
                     if origins is not None:
@@ -945,32 +945,32 @@ class Engine:
 
 
 def _infer_untyped(v: Any) -> str | None:
-    """Tipo inferido de um valor sem tipo declarado; listas sem valores não dizem nada (não criam conflitos)."""
+    """Inferred type of a value with no declared type; lists without values say nothing (they create no conflicts)."""
     if isinstance(v, list) and all(x is None for x in v):
         return None
     return T.infer(v)
 
 
 def untyped_problem(v: Any) -> str | None:
-    """Valor que, numa coluna sem `type`, mudaria ao ser guardado: inteiros acima de 2^53 e números com mais
-    algarismos do que um double (a coluna fica double), e listas com tipos misturados (ficariam texto)."""
+    """A value that would change when stored in a column without `type`: integers above 2^53 and numbers with more
+    digits than a double holds (the column becomes double), and lists with mixed types (they would become text)."""
     if v is None or isinstance(v, (bool, str)):
         return None
     if isinstance(v, int):
         if abs(v) > 2 ** 53:
-            return (f"o inteiro {v} não cabe exactamente num double (uma coluna sem tipo fica double); declare "
-                    f"type: bigint, decimal(...) ou string")
+            return (f"the integer {v} does not fit exactly in a double (an untyped column becomes double); declare "
+                    f"type: bigint, decimal(...) or string")
         return None
     if isinstance(v, (JsonFloat, Decimal)):
         exact = Decimal(v.text) if isinstance(v, JsonFloat) else v
         if exact.is_finite() and Decimal(repr(float(exact))) != exact:
-            return (f"{exact} tem mais algarismos do que um double guarda (uma coluna sem tipo fica double); declare "
-                    f"type: decimal(...) ou type: double com rounding: nearest")
+            return (f"{exact} has more digits than a double holds (an untyped column becomes double); declare "
+                    f"type: decimal(...) or type: double with rounding: nearest")
         return None
     if isinstance(v, list):
         kinds = {typed_key(x)[0] for x in v if x is not None and not isinstance(x, (dict, list))}
         if len(kinds) > 1:
-            return f"lista com valores de tipos diferentes ({', '.join(sorted(kinds))}): ficariam todos texto; declare o type"
+            return f"list with values of different types ({', '.join(sorted(kinds))}): they would all become text; declare the type"
         for x in v:
             if (problem := untyped_problem(x)):
                 return problem
@@ -987,14 +987,14 @@ def _where_text(w: dict) -> str:
 
 
 def _locator(spec: TableSpec, ctx: Context) -> str | None:
-    """Posição da linha no documento: 'childItems[1]' ou 'orders[0].lines[2]' (None sem explode)."""
+    """Position of the row in the document: 'childItems[1]' or 'orders[0].lines[2]' (None without explode)."""
     if not spec.explode:
         return None
     return ".".join(f"{lv}[{'-' if idx is None else idx}]" for lv, (_, idx) in zip(spec.explode, ctx.stack[1:]))
 
 
 def _source(col: ColumnSpec, ctx: Context) -> Any:
-    """Valor de origem (sem templates: esses passam por Engine._source, que regista as partes em falta)."""
+    """Source value (no templates: those go through Engine._source, which records the missing parts)."""
     if col.has_const:
         raw = col.const
     elif col.paths:
@@ -1007,45 +1007,45 @@ def _source(col: ColumnSpec, ctx: Context) -> Any:
 
 
 def _key_columns(spec: TableSpec) -> list[str]:
-    """Colunas que identificam a linha: keys (merge/dedupe) e replace_by."""
+    """Columns that identify the row: keys (merge/dedupe) and replace_by."""
     return list(dict.fromkeys(spec.keys + spec.replace_by))
 
 
 def _key_on_error(spec: TableSpec, names: list[str]) -> str:
-    """Chave nula: 'skip_row' só se declarado (na coluna ou na tabela); de resto é erro ('null' não se aplica)."""
+    """Null key: 'skip_row' only if declared (on the column or the table); otherwise it is an error ('null' does not apply)."""
     cols = {c.name: c for c in spec.columns}
     declared = [cols[n].on_error for n in names if n in cols and cols[n].on_error]
     return "skip_row" if "skip_row" in declared or (not declared and spec.on_error == "skip_row") else "fail"
 
 
 def check_value(chk: dict, v: Any, ctx: Context) -> str | None:
-    """Devolve a descrição do problema, ou None se o valor é válido."""
+    """Returns the description of the problem, or None if the value is valid."""
     if v is None or v == []:
         if chk.get("required"):
-            return "valor obrigatório em falta"
+            return "required value missing"
         if "required_if" in chk and evaluate(chk["required_if"], ctx):
-            return f"valor obrigatório quando {chk['required_if']}"
+            return f"value required when {chk['required_if']}"
         return None
     for item in v if isinstance(v, list) else [v]:
         if item is None:
             continue
         if "_regex" in chk and not chk["_regex"].search(text_of(item)):
-            return f"{item!r} não corresponde a /{chk['regex']}/"
+            return f"{item!r} does not match /{chk['regex']}/"
         if "_in" in chk:
             key = typed_key(item, chk.get("ignore_case", False))
             if key not in chk["_in"]:
                 other = [v for v in chk["in"] if typed_key(v)[0] != key[0] and text_of(v).lower() == text_of(item).lower()]
-                if other:   # 2 (número) e '2' (texto): tipos diferentes, não se adivinha
-                    return f"{item!r} ({key[0]}) só corresponde a {other[0]!r} na lista, que é de outro tipo"
-                return f"{item!r} não está na lista {chk['in']}"
+                if other:   # 2 (number) and '2' (text): different types, no guessing
+                    return f"{item!r} ({key[0]}) only matches {other[0]!r} in the list, which is of another type"
+                return f"{item!r} is not in the list {chk['in']}"
         if "min" in chk or "max" in chk:
             if isinstance(item, bool) or not isinstance(item, (int, float, Decimal)):
-                return f"{item!r} não é numérico"          # antes: true passava como 1 e '5' (texto) como 5
+                return f"{item!r} is not numeric"          # before: true passed as 1 and '5' (text) as 5
             x = to_decimal(item)
             if "min" in chk and x < to_decimal(chk["min"]):
-                return f"{item!r} < mínimo {chk['min']}"
+                return f"{item!r} < minimum {chk['min']}"
             if "max" in chk and x > to_decimal(chk["max"]):
-                return f"{item!r} > máximo {chk['max']}"
+                return f"{item!r} > maximum {chk['max']}"
     return None
 
 
@@ -1053,59 +1053,59 @@ _VALIDATORS: dict[str, Any] = {}
 
 
 def schema_validator(config: Config, sub: SubmodelSpec):
-    """Validador jsonschema para o schema SAMM do submodelo (em cache por ficheiro)."""
+    """jsonschema validator for the submodel's SAMM schema (cached per file)."""
     try:
         import jsonschema
     except ImportError as e:  # pragma: no cover
-        raise ConfigError("Para validar documentos instale jsonschema (pip install jsonschema)") from e
+        raise ConfigError("To validate documents install jsonschema (pip install jsonschema)") from e
     path = Path(os.path.normpath((config.base_dir or Path.cwd()) / sub.model["schema"]))
     key = str(path.resolve())
     if key not in _VALIDATORS:
         if not path.is_file():
-            raise ConfigError(f"Submodelo '{sub.name}': schema não encontrado em {path}")
+            raise ConfigError(f"Submodel '{sub.name}': schema not found at {path}")
         schema = json.loads(path.read_text(encoding="utf-8"))
         _VALIDATORS[key] = jsonschema.validators.validator_for(schema)(schema)
     return _VALIDATORS[key]
 
 
-_TYPE_NAMES = {"string": "texto", "number": "número", "integer": "número inteiro", "boolean": "verdadeiro/falso",
-               "object": "objecto", "array": "lista", "null": "nulo"}
+_TYPE_NAMES = {"string": "text", "number": "number", "integer": "integer", "boolean": "true/false",
+               "object": "object", "array": "list", "null": "null"}
 
 
 def describe_error(e) -> dict[str, str]:
-    """Erro jsonschema -> {path, message} legível em português."""
+    """jsonschema error -> readable {path, message}."""
     path = ""
     for part in e.absolute_path:
         path += f"[{part}]" if isinstance(part, int) else (f".{part}" if path else str(part))
     v, val = e.validator, e.validator_value
     if v == "required":
         m = re.search(r"'([^']+)' is a required property", e.message)
-        msg = f"falta o campo obrigatório '{m.group(1) if m else e.message}'"
+        msg = f"required field '{m.group(1) if m else e.message}' is missing"
     elif v == "type":
-        names = " ou ".join(_TYPE_NAMES.get(t, t) for t in (val if isinstance(val, list) else [val]))
-        msg = f"{json.dumps(e.instance, ensure_ascii=False, default=str)[:60]} devia ser {names}"
+        names = " or ".join(_TYPE_NAMES.get(t, t) for t in (val if isinstance(val, list) else [val]))
+        msg = f"{json.dumps(e.instance, ensure_ascii=False, default=str)[:60]} should be {names}"
     elif v == "pattern":
-        kind = "data/hora ISO 8601" if "[0-9]{3,}" in str(val) and "T" in str(val) else "o formato esperado"
-        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} não tem {kind}"
+        kind = "an ISO 8601 date/time" if "[0-9]{3,}" in str(val) and "T" in str(val) else "the expected format"
+        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} is not {kind}"
     elif v == "enum":
-        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} não é um dos valores permitidos ({', '.join(map(str, val))})"
+        msg = f"{json.dumps(e.instance, ensure_ascii=False)[:60]} is not one of the allowed values ({', '.join(map(str, val))})"
     elif v in ("minimum", "exclusiveMinimum"):
-        msg = f"{e.instance} é menor que o mínimo {val}"
+        msg = f"{e.instance} is less than the minimum {val}"
     elif v in ("maximum", "exclusiveMaximum"):
-        msg = f"{e.instance} é maior que o máximo {val}"
+        msg = f"{e.instance} is greater than the maximum {val}"
     elif v == "minItems":
-        msg = f"a lista tem de ter pelo menos {val} elemento(s)"
+        msg = f"the list must have at least {val} element(s)"
     elif v == "minLength":
-        msg = "não pode estar vazio"
+        msg = "cannot be empty"
     elif v == "additionalProperties":
-        msg = f"campo não previsto no modelo: {e.message.split('(')[-1].rstrip(')')}"
+        msg = f"field not defined in the model: {e.message.split('(')[-1].rstrip(')')}"
     else:
         msg = e.message
     return {"path": path, "message": msg, "rule": v}
 
 
 def _with_column(spec: TableSpec, col: ColumnSpec) -> TableSpec:
-    """Cópia da tabela com a coluna à cabeça (se ainda não existir)."""
+    """Copy of the table with the column first (if it is not there yet)."""
     if any(c.name == col.name for c in spec.columns):
         return spec
     return dataclasses.replace(spec, columns=[col] + spec.columns)
@@ -1115,28 +1115,28 @@ _TPL_RE = TEMPLATE_RE
 
 
 def _canonical_part(path: str, t: str | None, v: Any) -> Any:
-    """Parte da chave do document_id na forma canónica: texto tal como está; outros valores só com o tipo
-    declarado (`{path: version, type: int}`), e já convertidos: 0, '0' e 0.0 dão o mesmo UUID."""
+    """Part of the document_id key in canonical form: text as it is; other values only with the declared
+    type (`{path: version, type: int}`), and already converted: 0, '0' and 0.0 give the same UUID."""
     if t is None:
         if isinstance(v, str):
             return v
-        raise ValueError(f"o campo '{path}' é {type(v).__name__} ({v!r}): declare o tipo, ex.: "
-                         f"{{path: {path}, type: int}}, para que 0, '0' e 0.0 dêem o mesmo UUID")
+        raise ValueError(f"field '{path}' is {type(v).__name__} ({v!r}): declare its type, e.g. "
+                         f"{{path: {path}, type: int}}, so that 0, '0' and 0.0 give the same UUID")
     return T.cast(v, t)
 
 
 def _key_part(v: Any) -> Any:
-    """Valor usado para identificar (document_id.from): uma projecção com elementos em falta não é aceite."""
+    """Value used for identification (document_id.from): a projection with missing elements is not accepted."""
     if isinstance(v, Projection):
         if v.missing:
-            raise MissingElements(f"'{v.path}': {v.missing} de {len(v.slots)} elemento(s) sem o campo "
-                                  f"(num template ou no document_id não se aceitam elementos em falta)")
+            raise MissingElements(f"'{v.path}': {v.missing} of {len(v.slots)} element(s) without the field "
+                                  f"(missing elements are not accepted in a template or in the document_id)")
         return list(v)
     return v
 
 
 def _render(template: str, ctx: Context) -> tuple[str, list[str], int]:
-    """-> (texto, partes em falta, nº de partes). Quem chama decide o que fazer com as partes em falta."""
+    """-> (text, missing parts, number of parts). The caller decides what to do with the missing parts."""
     missing: list[str] = []
 
     def repl(m):
@@ -1144,26 +1144,26 @@ def _render(template: str, ctx: Context) -> tuple[str, list[str], int]:
         if v is MISSING or v is None:
             missing.append(m.group(1))
             return ""
-        return text_of(v)   # o mesmo texto das colunas string (booleano true/false, objecto em JSON, ...)
+        return text_of(v)   # the same text as string columns (boolean true/false, object as JSON, ...)
 
     return _TPL_RE.sub(repl, template), missing, len(_TPL_RE.findall(template))
 
 
 def flatten(obj: dict, exclude: list[str], max_depth: int, lists: str, naming: str = "full") -> dict[str, Any]:
-    """Achata um objecto: {a: {b: 1}} -> {a_b: 1} (naming=full) ou {b: 1} (naming=leaf)."""
+    """Flattens an object: {a: {b: 1}} -> {a_b: 1} (naming=full) or {b: 1} (naming=leaf)."""
     out, _, _, _ = flatten_sources(_leaves(obj, exclude, max_depth, lists), naming)
     return out
 
 
 def flatten_sources(leaves: list[tuple[tuple[str, ...], Any]], naming: str,
                     fixed: Any = None) -> tuple[dict, dict, list, list]:
-    """-> (coluna -> valor, coluna -> caminho de origem, colisões [(coluna, caminho, caminho)], fora do modelo).
-    Dois campos diferentes que dão o mesmo nome de coluna (ex.: fossilGhgEmissions e fossil_ghg_emissions)
-    são uma colisão: antes ficava o primeiro e o outro perdia-se sem aviso.
+    """-> (column -> value, column -> source path, collisions [(column, path, path)], outside the model).
+    Two different fields that give the same column name (e.g. fossilGhgEmissions and fossil_ghg_emissions)
+    are a collision: before, the first one stayed and the other was lost without a warning.
 
-    `fixed` (LeafNames, de model.schema): os nomes leaf vêm do modelo e não dos campos deste documento (antes o
-    mesmo campo ia para 'fossil' num documento e 'ghg_fossil' noutro). Um campo fora do modelo fica com o nome
-    completo (estável) e é devolvido em `fora do modelo`; se esse nome for o de um campo do modelo, é colisão."""
+    `fixed` (LeafNames, from model.schema): leaf names come from the model, not from this document's fields (before,
+    the same field went to 'fossil' in one document and 'ghg_fossil' in another). A field outside the model keeps
+    its full (stable) name and is returned in `outside`; if that name is a model field's name, it is a collision."""
     if fixed is None:
         names = column_names([p for p, _ in leaves], naming)
     else:
@@ -1203,7 +1203,7 @@ def _leaves(obj: dict, exclude: list[str], max_depth: int, lists: str) -> list[t
             elif isinstance(v, list):
                 objects = any(isinstance(x, (dict, list)) for x in v)
                 if lists == "skip" or (objects and lists == "array"):
-                    continue  # listas de objectos -> tabelas filhas (explode / auto_normalize)
+                    continue  # lists of objects -> child tables (explode / auto_normalize)
                 leaves.append((p, json_text(v) if lists == "json" else v))
             else:
                 leaves.append((p, v))
@@ -1213,7 +1213,7 @@ def _leaves(obj: dict, exclude: list[str], max_depth: int, lists: str) -> list[t
 
 
 def _same_source(col: ColumnSpec | None, dotted: str, level: int) -> bool:
-    """A coluna explícita lê o mesmo campo que o modo auto (substituição intencional, ex.: para dar um tipo)."""
+    """The explicit column reads the same field as auto mode (an intentional override, e.g. to give it a type)."""
     if col is None or not col.path:
         return False
     p = col.path.strip()
@@ -1224,8 +1224,8 @@ def _same_source(col: ColumnSpec | None, dotted: str, level: int) -> bool:
 
 
 def column_names(paths: list[tuple[str, ...]], naming: str = "full") -> dict[tuple[str, ...], str]:
-    """Nomes de coluna para caminhos. 'leaf' usa só o último campo e acrescenta
-    os níveis de cima apenas onde há colisão (ex.: production_stage_x vs packaging_stage_x)."""
+    """Column names for paths. 'leaf' uses only the last field and adds
+    the levels above only where there is a collision (e.g. production_stage_x vs packaging_stage_x)."""
     if naming == "full":
         return {p: sanitize("_".join(p)) for p in paths}
     depth = {p: 1 for p in paths}
@@ -1241,13 +1241,13 @@ def column_names(paths: list[tuple[str, ...]], naming: str = "full") -> dict[tup
                 depth[p] = min(depth[p] + 1, len(p))
 
 
-# --- unwrap: listas 1:1 -> objectos ---------------------------------------
+# --- unwrap: 1:1 lists -> objects ---------------------------------------
 def unwrap(obj: Any, rule: dict, source: str | None = None, path: str = "", firsts: list | None = None) -> Any:
-    """Substitui listas que na prática são 1:1 pelo seu único elemento.
+    """Replaces lists that are 1:1 in practice with their single element.
 
     rule = {paths: set, all: bool, except: set, on_multiple: fail|first|keep}
-    Caminhos sem índices: 'pcfAssessmentAndMethodology.pcfAssessmentInformation.time'.
-    `firsts` (opcional) recebe (caminho, nº de elementos) de cada lista reduzida ao 1.º elemento (on_multiple: first).
+    Paths without indices: 'pcfAssessmentAndMethodology.pcfAssessmentInformation.time'.
+    `firsts` (optional) receives (path, number of elements) for each list reduced to its 1st element (on_multiple: first).
     """
     if isinstance(obj, list):
         return [unwrap(x, rule, source, path, firsts) for x in obj]
@@ -1265,10 +1265,10 @@ def unwrap(obj: Any, rule: dict, source: str | None = None, path: str = "", firs
                 elif len(v) == 1:
                     v = v[0]
                 elif rule["on_multiple"] == "fail":
-                    raise TransformError(f"unwrap: '{p}' tem {len(v)} elementos em '{source}' (esperado 1). "
-                                         f"Use on_multiple: first|keep ou retire-o do unwrap.")
+                    raise TransformError(f"unwrap: '{p}' has {len(v)} elements in '{source}' (expected 1). "
+                                         f"Use on_multiple: first|keep or remove it from the unwrap.")
                 elif rule["on_multiple"] == "first":
-                    log.warning("unwrap: '%s' tem %d elementos em %s — usado o primeiro", p, len(v), source)
+                    log.warning("unwrap: '%s' has %d elements in %s — the first was used", p, len(v), source)
                     if firsts is not None:
                         firsts.append((p, len(v)))
                     v = v[0]
@@ -1291,17 +1291,17 @@ def _array_paths(obj: Any, levels: list[str], cur: list[str], found: dict[tuple,
 
 
 def normalize_specs(sub: SubmodelSpec, docs: list[Document]) -> list[TableSpec]:
-    """Gera tabelas automaticamente: 1 tabela raiz + 1 tabela por cada lista de objectos.
+    """Generates tables automatically: 1 root table + 1 table for each list of objects.
 
-    Com `children: schema` (omissão com model.schema) as tabelas filhas são as listas do modelo mais as do lote:
-    uma lista que ficou vazia em todos os documentos do lote continua a ter tabela, e o replace_by/overwrite dela
-    corre. Com `naming: leaf` os nomes das tabelas e das colunas são fixados pelo modelo, não pelo lote."""
+    With `children: schema` (the default with model.schema) the child tables are the model's lists plus the batch's:
+    a list that was empty in every document of the batch still has a table, and its replace_by/overwrite
+    runs. With `naming: leaf` the table and column names are fixed by the model, not by the batch."""
     from .pathcheck import Problem, leaf_names_for, model_list_paths, model_position  # noqa: PLC0415
 
     an = sub.auto_normalize or {}
     d = sub.defaults
     prefix = sanitize(an.get("table_prefix", sub.name))
-    if "id_path" not in an and sub.document_id:  # sem id de negócio: o UUID do documento liga as tabelas
+    if "id_path" not in an and sub.document_id:  # no business id: the document's UUID links the tables
         id_path, id_col = "$meta.document_id", sub.document_id["column"]
     else:
         id_path = an.get("id_path", "catenaXId")
@@ -1328,7 +1328,7 @@ def normalize_specs(sub: SubmodelSpec, docs: list[Document]) -> list[TableSpec]:
     batch = [lv for lv in found if not any(x in exclude for x in lv)]
     if an.get("children") == "schema":
         model_set = set(in_model)
-        kept = in_model + [lv for lv in batch if lv not in model_set]     # lista fora do modelo: também entra
+        kept = in_model + [lv for lv in batch if lv not in model_set]     # a list outside the model: also included
     else:
         kept = batch
 
@@ -1343,9 +1343,9 @@ def normalize_specs(sub: SubmodelSpec, docs: list[Document]) -> list[TableSpec]:
             key = flat(lv)
             tnames[key] = fixed.get(key) or sanitize("_".join(key))
             if key not in fixed and tnames[key] in owners:
-                raise TransformError(f"auto_normalize: a lista '{'.'.join(key)}' (fora do modelo) e a lista "
-                                     f"'{'.'.join(owners[tnames[key]])}' dão a mesma tabela '{prefix}_{tnames[key]}'; "
-                                     f"exclua uma com auto_normalize.exclude")
+                raise TransformError(f"auto_normalize: list '{'.'.join(key)}' (outside the model) and list "
+                                     f"'{'.'.join(owners[tnames[key]])}' give the same table '{prefix}_{tnames[key]}'; "
+                                     f"exclude one with auto_normalize.exclude")
     else:
         tnames = column_names([flat(lv) for lv in kept], naming)
     for levels in kept:
@@ -1366,7 +1366,7 @@ def normalize_specs(sub: SubmodelSpec, docs: list[Document]) -> list[TableSpec]:
             except Problem:
                 pos = None
             if pos is None:
-                opts["auto_naming"] = "full"     # lista fora do modelo: nomes completos (estáveis)
+                opts["auto_naming"] = "full"     # a list outside the model: full (stable) names
             else:
                 opts["leaf_names"] = leaf_names_for(walker, pos, exclude, max_depth, "array")
         specs.append(TableSpec(

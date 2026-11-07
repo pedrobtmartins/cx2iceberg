@@ -1,4 +1,4 @@
-"""Linha de comandos: cx2iceberg {run,validate,ddl,init,transforms}."""
+"""Command line: cx2iceberg {run,validate,ddl,init,transforms}."""
 from __future__ import annotations
 
 import argparse
@@ -16,21 +16,21 @@ from .writer import AthenaIcebergWriter, ddl, write_local
 
 def _preview(results: dict[str, TableResult], n: int):
     for name, res in results.items():
-        print(f"\n=== {name}  ({len(res.rows)} linha(s), mode={res.spec.mode}, keys={res.spec.keys or '-'}"
-              f"{', ignoradas=' + str(res.skipped) if res.skipped else ''}"
-              f"{', checks falhados=' + str(res.check_failures) if res.check_failures else ''})")
+        print(f"\n=== {name}  ({len(res.rows)} row(s), mode={res.spec.mode}, keys={res.spec.keys or '-'}"
+              f"{', skipped=' + str(res.skipped) if res.skipped else ''}"
+              f"{', failed checks=' + str(res.check_failures) if res.check_failures else ''})")
         print("    " + ", ".join(f"{c}:{t}" for c, t in res.types.items()))
         for r in res.rows[:n]:
             print("    " + json.dumps(r, ensure_ascii=False, default=str))
 
 
-# Códigos de saída: 0 = tudo escrito; 2 = carga parcial (documentos rejeitados, os restantes escritos);
-# 1 = falha (configuração, limite de erros, escrita): nada escrito pelo cx2iceberg nesta fase.
+# Exit codes: 0 = everything written; 2 = partial load (documents rejected, the others written);
+# 1 = failure (configuration, error limit, write): nothing written by cx2iceberg at this stage.
 EXIT_PARTIAL = 2
 
 
 def _save_report(report: Report, args) -> None:
-    """Chamado uma só vez, no fim (também quando a escrita falha): o relatório diz tudo."""
+    """Called only once, at the end (also when the write fails): the report says it all."""
     report.finish_write()
     report.close()
     print(report.render(), file=sys.stderr)
@@ -43,10 +43,10 @@ def _transform(args) -> tuple[C.Config, dict[str, TableResult], Report]:
     cfg = C.load(args.config)
     docs = list(read_documents(args.inputs, cfg.input, semantic_id=args.semantic_id))
     if not docs:
-        sys.exit("Nenhum documento encontrado nos inputs")
+        sys.exit("No documents found in the inputs")
     report = Report(samples=args.samples, max_errors=args.max_errors, details_path=args.report_details)
     try:
-        # partial=True: os documentos rejeitados ficam de fora e os restantes seguem; o relatório diz quais
+        # partial=True: rejected documents are left out and the others go on; the report says which
         results = Engine(cfg, match_all=args.match_all or None, report=report).run(docs, partial=True)
     except (C.ConfigError, TransformError):
         _save_report(report, args)
@@ -58,13 +58,13 @@ def _transform(args) -> tuple[C.Config, dict[str, TableResult], Report]:
 
 def _finish(report: Report, written: bool) -> None:
     if report.status == "partial":
-        what = "as linhas dos restantes foram escritas" if written else "nada foi escrito (pré-visualização)"
-        print(f"Carga parcial: {len(report.rejected)} documento(s) rejeitado(s); {what}.", file=sys.stderr)
+        what = "the rows of the others were written" if written else "nothing was written (preview)"
+        print(f"Partial load: {len(report.rejected)} document(s) rejected; {what}.", file=sys.stderr)
         sys.exit(EXIT_PARTIAL)
 
 
 def _precheck_offline(results: dict[str, TableResult], report: Report) -> None:
-    """No dry-run, a mesma pré-verificação da escrita que não precisa da AWS (tipos Arrow, awswrangler, partições)."""
+    """In the dry run, the same write pre-check that does not need AWS (Arrow types, awswrangler, partitions)."""
     from .writer import WriteCheckError, check_offline, check_table
 
     problems = []
@@ -76,7 +76,7 @@ def _precheck_offline(results: dict[str, TableResult], report: Report) -> None:
         except WriteCheckError as e:
             problems.append(str(e))
     if problems:
-        raise WriteCheckError("pré-verificação da escrita:\n  " + "\n  ".join(problems))
+        raise WriteCheckError("write pre-check:\n  " + "\n  ".join(problems))
 
 
 def cmd_run(args):
@@ -85,17 +85,17 @@ def cmd_run(args):
     try:
         if args.out:
             for p in write_local(results, args.out, args.format, report=report):
-                print(f"escrito {p}")
+                print(f"written {p}")
         if not athena:
             _precheck_offline(results, report)
             _preview(results, args.show)
         else:
             for t, n in AthenaIcebergWriter(cfg.target, report=report).write(results).items():
-                print(f"{cfg.target['database']}.{t}: {n} linha(s)")
+                print(f"{cfg.target['database']}.{t}: {n} row(s)")
     except Exception as e:
-        if report.failure is None:   # ex.: falha antes da 1.ª tabela (ligação, base de dados)
-            report.failure = f"escrita: {e}"
-        raise SystemExit(f"Erro de escrita: {e}") from e
+        if report.failure is None:   # e.g. a failure before the 1st table (connection, database)
+            report.failure = f"write: {e}"
+        raise SystemExit(f"Write error: {e}") from e
     finally:
         _save_report(report, args)
     _finish(report, written=athena)
@@ -112,12 +112,12 @@ def cmd_ddl(args):
 def cmd_validate(args):
     cfg = C.load(args.config)
     for s in cfg.submodels:
-        print(f"submodelo '{s.name}': match={s.match or '(todos)'}")
+        print(f"submodel '{s.name}': match={s.match or '(all)'}")
         for t in s.tables:
-            print(f"  - {t.name}: {len(t.columns)} coluna(s), explode={t.explode or '-'}, mode={t.mode}, keys={t.keys or '-'}")
+            print(f"  - {t.name}: {len(t.columns)} column(s), explode={t.explode or '-'}, mode={t.mode}, keys={t.keys or '-'}")
         if s.auto_normalize is not None:
-            print(f"  - auto_normalize: {s.auto_normalize or '(por omissão)'}")
-    print("Configuração válida.")
+            print(f"  - auto_normalize: {s.auto_normalize or '(default)'}")
+    print("Configuration is valid.")
 
 
 def cmd_init(args):
@@ -125,11 +125,11 @@ def cmd_init(args):
     from .scaffold import scaffold
 
     if not args.inputs and not args.schema:
-        sys.exit("Indique JSONs de exemplo e/ou --schema <Aspect-schema.json>")
+        sys.exit("Give example JSONs and/or --schema <Aspect-schema.json>")
     read = list(read_documents(args.inputs, {"list_is_document": False})) if args.inputs else []
     bad = [f"{d.source_file}: {d.error}" for d in read if d.error]
     if bad:
-        sys.exit("Não foi possível ler:\n  " + "\n  ".join(bad))
+        sys.exit("Could not read:\n  " + "\n  ".join(bad))
     docs = [d.data for d in read]
     semantic_id = args.semantic_id
     if args.schema:
@@ -145,7 +145,7 @@ def cmd_init(args):
                     args.style == "struct", args.scalar_lists)
     if args.output:
         open(args.output, "w", encoding="utf-8").write(text)
-        print(f"Configuração escrita em {args.output}")
+        print(f"Configuration written to {args.output}")
     else:
         print(text)
 
@@ -163,61 +163,61 @@ def cmd_transforms(args):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="cx2iceberg", description="Catena-X submodel JSON -> tabelas Iceberg no Athena")
+    p = argparse.ArgumentParser(prog="cx2iceberg", description="Catena-X submodel JSON -> Iceberg tables in Athena")
     p.add_argument("-v", "--verbose", action="count", default=0)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):
         sp.add_argument("-c", "--config", required=True)
-        sp.add_argument("inputs", nargs="+", help="ficheiros, pastas ou s3://bucket/prefixo")
-        sp.add_argument("--semantic-id", help="semantic id (URN) a aplicar a todos os documentos")
-        sp.add_argument("--match-all", action="store_true", help="um documento pode alimentar vários submodelos")
-        sp.add_argument("--table", action="append", help="processar só esta(s) tabela(s)")
-        sp.add_argument("--report", help="grava o relatório (JSON: contagens e exemplos por tabela/coluna/motivo)")
-        sp.add_argument("--report-details", help="grava todos os eventos, um por linha (JSON Lines), sem os guardar em memória")
-        sp.add_argument("--max-errors", type=int, default=1000, help="pára a carga ao fim de N erros (omissão: 1000)")
-        sp.add_argument("--samples", type=int, default=20, help="exemplos guardados por grupo do relatório (omissão: 20)")
+        sp.add_argument("inputs", nargs="+", help="files, folders or s3://bucket/prefix")
+        sp.add_argument("--semantic-id", help="semantic id (URN) to apply to every document")
+        sp.add_argument("--match-all", action="store_true", help="a document can feed several submodels")
+        sp.add_argument("--table", action="append", help="process only this table (or these tables)")
+        sp.add_argument("--report", help="writes the report (JSON: counts and examples per table/column/reason)")
+        sp.add_argument("--report-details", help="writes every event, one per line (JSON Lines), without keeping them in memory")
+        sp.add_argument("--max-errors", type=int, default=1000, help="stops the load after N errors (default: 1000)")
+        sp.add_argument("--samples", type=int, default=20, help="examples kept per report group (default: 20)")
 
-    r = sub.add_parser("run", help="transformar e escrever no Athena")
+    r = sub.add_parser("run", help="transform and write to Athena")
     common(r)
-    r.add_argument("--dry-run", action="store_true", help="não escreve no Athena; mostra pré-visualização")
-    r.add_argument("--out", help="escreve as tabelas localmente nesta pasta (implica dry-run)")
+    r.add_argument("--dry-run", action="store_true", help="does not write to Athena; shows a preview")
+    r.add_argument("--out", help="writes the tables locally into this folder (implies dry-run)")
     r.add_argument("--format", choices=["csv", "parquet", "jsonl"], default="csv")
-    r.add_argument("--show", type=int, default=5, help="linhas a mostrar por tabela")
+    r.add_argument("--show", type=int, default=5, help="rows to show per table")
     r.set_defaults(fn=cmd_run)
 
-    d = sub.add_parser("ddl", help="mostra o CREATE TABLE Iceberg de cada tabela")
+    d = sub.add_parser("ddl", help="shows the Iceberg CREATE TABLE of each table")
     common(d)
     d.set_defaults(fn=cmd_ddl)
 
-    v = sub.add_parser("validate", help="valida a configuração")
+    v = sub.add_parser("validate", help="validates the configuration")
     v.add_argument("-c", "--config", required=True)
     v.set_defaults(fn=cmd_validate)
 
-    i = sub.add_parser("init", help="gera uma configuração inicial a partir de JSONs de exemplo e/ou do schema SAMM")
+    i = sub.add_parser("init", help="generates an initial configuration from example JSONs and/or the SAMM schema")
     i.add_argument("inputs", nargs="*")
-    i.add_argument("--schema", help="JSON Schema gerado pelo SAMM (…/gen/<Aspect>-schema.json): inclui todos os campos")
-    i.add_argument("--name", default="submodel", help="prefixo das tabelas")
+    i.add_argument("--schema", help="JSON Schema generated by SAMM (…/gen/<Aspect>-schema.json): includes every field")
+    i.add_argument("--name", default="submodel", help="table prefix")
     i.add_argument("--semantic-id")
-    i.add_argument("--id-path", help="caminho do id do documento (omissão: catenaXId, id ou *.id)")
-    i.add_argument("--unwrap", help="'all' ou lista separada por vírgulas de listas 1:1 a tratar como objecto")
-    i.add_argument("--keep-list", action="append", help="com --unwrap all: lista que tem mesmo vários elementos (repetível)")
-    i.add_argument("--naming", choices=["full", "leaf"], default="full", help="leaf = nomes curtos de coluna")
+    i.add_argument("--id-path", help="path of the document id (default: catenaXId, id or *.id)")
+    i.add_argument("--unwrap", help="'all' or a comma-separated list of 1:1 lists to treat as objects")
+    i.add_argument("--keep-list", action="append", help="with --unwrap all: a list that really has several elements (repeatable)")
+    i.add_argument("--naming", choices=["full", "leaf"], default="full", help="leaf = short column names")
     i.add_argument("--style", choices=["flat", "struct"], default="flat",
-                   help="flat = colunas + tabelas filhas; struct = 1 tabela com colunas struct por bloco")
+                   help="flat = columns + child tables; struct = 1 table with struct columns per block")
     i.add_argument("--scalar-lists", choices=["array", "rows"], default="array",
-                   help="listas de valores simples: coluna array<...> ou tabela filha (1 linha por valor)")
+                   help="lists of simple values: an array<...> column or a child table (1 row per value)")
     i.add_argument("-o", "--output")
     i.set_defaults(fn=cmd_init)
 
-    s = sub.add_parser("studio", help="abre a interface web para ver, editar e pré-visualizar configurações")
-    s.add_argument("--root", default=".", help="pasta com as configurações e os dados de exemplo (omissão: a actual)")
+    s = sub.add_parser("studio", help="opens the web interface to view, edit and preview configurations")
+    s.add_argument("--root", default=".", help="folder with the configurations and the example data (default: the current one)")
     s.add_argument("--port", type=int, default=8765)
-    s.add_argument("--open", action="store_true", help="abre o browser")
-    s.add_argument("--models-dir", help="clone local de eclipse-tractusx/sldt-semantic-models (sem acesso ao GitHub)")
+    s.add_argument("--open", action="store_true", help="opens the browser")
+    s.add_argument("--models-dir", help="local clone of eclipse-tractusx/sldt-semantic-models (without GitHub access)")
     s.set_defaults(fn=cmd_studio)
 
-    t = sub.add_parser("transforms", help="lista as transformações disponíveis")
+    t = sub.add_parser("transforms", help="lists the available transformations")
     t.set_defaults(fn=cmd_transforms)
 
     args = p.parse_args(argv)
@@ -226,9 +226,9 @@ def main(argv=None):
     try:
         args.fn(args)
     except C.ConfigError as e:
-        sys.exit(f"Erro de configuração: {e}")
+        sys.exit(f"Configuration error: {e}")
     except TransformError as e:
-        sys.exit(f"Erro de transformação: {e}")
+        sys.exit(f"Transformation error: {e}")
 
 
 if __name__ == "__main__":

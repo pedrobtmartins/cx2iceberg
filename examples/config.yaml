@@ -1,18 +1,18 @@
-# Exemplo completo: 3 submodelos Catena-X -> tabelas Iceberg no Athena.
-# Valores ${VAR:-omissão} vêm de variáveis de ambiente.
+# Full example: 3 Catena-X submodels -> Iceberg tables in Athena.
+# ${VAR:-default} values come from environment variables.
 
 target:
   database: ${ATHENA_DATABASE:-catenax}
-  location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}   # cada tabela fica em <location>/<tabela>/
+  location: ${ICEBERG_LOCATION:-s3://my-bucket/warehouse}   # each table goes to <location>/<table>/
   temp_path: ${ATHENA_TEMP:-s3://my-bucket/tmp}
   workgroup: ${ATHENA_WORKGROUP:-primary}
   region: ${AWS_REGION:-eu-west-1}
 
 input:
-  # Os JSON "value-only" do Catena-X não trazem o semantic id: indique-o por nome de ficheiro
-  # (ou --semantic-id na linha de comandos, ou input.envelope se vier embrulhado).
-  # A pasta examples/data tem também ficheiros de outras configurações (pcf_7, pcf_9): ignorá-los é uma
-  # decisão declarada (fica contada no relatório); sem isto, um documento sem submodelo é um erro.
+  # Catena-X "value-only" JSON does not carry the semantic id: give it by file name
+  # (or --semantic-id on the command line, or input.envelope if it comes wrapped).
+  # The examples/data folder also has files for other configurations (pcf_7, pcf_9): ignoring them is a
+  # declared decision (counted in the report); without this, a document without a submodel is an error.
   on_unmatched: skip
   semantic_id_map:
     "*serial_part*": urn:samm:io.catenax.serial_part:3.0.0#SerialPart
@@ -25,14 +25,14 @@ defaults:
 
 submodels:
 
-  # ------------------------------------------------------------------ SerialPart: regras explícitas
+  # ------------------------------------------------------------------ SerialPart: explicit rules
   - name: serial_part
     match:
       semantic_id: "urn:samm:io.catenax.serial_part:3.*"
-    document_id:              # UUID igual em todas as tabelas deste submodelo -> JOIN entre elas
+    document_id:              # the same UUID in every table of this submodel -> JOIN between them
       column: serial_part_uuid
-      from: catenaXId         # determinístico: o mesmo gémeo digital dá sempre o mesmo UUID
-    common_columns:           # entram em todas as tabelas deste submodelo
+      from: catenaXId         # deterministic: the same digital twin always gives the same UUID
+    common_columns:           # go into every table of this submodel
       catenax_id: { path: $root.catenaXId, transform: urn_suffix, required: true }
     tables:
       - name: serial_part
@@ -57,7 +57,7 @@ submodels:
       - name: serial_part_local_identifiers
         explode: localIdentifiers
         mode: append
-        replace_by: [catenax_id]   # apaga as linhas antigas do mesmo gémeo digital antes de inserir
+        replace_by: [catenax_id]   # deletes the old rows of the same digital twin before inserting
         keys: [catenax_id, key]
         columns:
           key: { path: key, transform: snake_case }
@@ -73,7 +73,7 @@ submodels:
           standard: classificationStandard
           description: { path: classificationDescription, transform: [trim, { substring: [0, 200] }] }
 
-  # ------------------------------------------------------------------ BOM: explode + filtros + unidades
+  # ------------------------------------------------------------------ BOM: explode + filters + units
   - name: single_level_bom_as_built
     match:
       semantic_id: "urn:samm:io.catenax.single_level_bom_as_built:*"
@@ -103,19 +103,19 @@ submodels:
           parent_id: { path: $root.catenaXId, transform: urn_suffix }
           child_id: { path: catenaXId, transform: urn_suffix }
 
-  # ------------------------------------------------------------------ PCF: tudo automático
+  # ------------------------------------------------------------------ PCF: all automatic
   - name: pcf
     match:
-      semantic_id: "urn:samm:io.catenax.pcf:7.*"   # a versão do modelo abaixo
+      semantic_id: "urn:samm:io.catenax.pcf:7.*"   # the model version below
     model:
-      # com o schema, as tabelas filhas são TODAS as listas do modelo, haja ou não dados no lote: um documento
-      # cuja lista ficou vazia apaga as linhas antigas dessa lista (sem ele seria preciso children: batch)
+      # with the schema, the child tables are ALL the model's lists, whether or not the batch has data: a document
+      # whose list became empty deletes that list's old rows (without it, children: batch would be needed)
       schema: schemas/pcf_7.0.0-schema.json
-    validate: off              # o data/pcf_demo.json é um exemplo reduzido, sem todos os campos obrigatórios do 7.0.0
-    document_id: true          # sem 'from': UUID a partir do conteúdo do documento
+    validate: off              # data/pcf_demo.json is a reduced example, without all the fields 7.0.0 requires
+    document_id: true          # no 'from': UUID from the document's content
     defaults:
       mode: merge
     auto_normalize:
       table_prefix: pcf
-      id_path: id            # chave do documento (Catena-X normalmente: catenaXId)
+      id_path: id            # the document's key (Catena-X usually: catenaXId)
       id_column: pcf_id

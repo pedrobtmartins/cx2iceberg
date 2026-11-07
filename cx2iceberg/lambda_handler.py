@@ -1,17 +1,17 @@
-"""Handler AWS Lambda para eventos S3 (ex.: ficheiros entregues pelo EDC num bucket).
+"""AWS Lambda handler for S3 events (e.g. files delivered by the EDC into a bucket).
 
-Variáveis de ambiente:
-    CX2ICEBERG_CONFIG   caminho local (no pacote) ou s3://bucket/config.yaml
+Environment variables:
+    CX2ICEBERG_CONFIG   local path (in the package) or s3://bucket/config.yaml
 
-Tudo ou nada por invocação: se algum documento do evento for rejeitado, nada é escrito e a invocação
-falha (o relatório vai para o log). Assim uma nova tentativa não duplica linhas já escritas. Configure
-MaximumRetryAttempts=0 e um destino on-failure (ou DLQ): repetir não corrige erros nos dados e, sem destino,
-a AWS descarta o evento depois das tentativas.
+All or nothing per invocation: if any document of the event is rejected, nothing is written and the invocation
+fails (the report goes to the log). That way a retry does not duplicate rows already written. Configure
+MaximumRetryAttempts=0 and an on-failure destination (or DLQ): retrying does not fix errors in the data and, without
+a destination, AWS discards the event after the attempts.
 
-Depois da escrita nada pode falhar: a resposta (e o texto do log) é construída e validada antes de escrever.
-Uma falha depois da escrita marcaria a invocação como falhada com os dados já escritos; a AWS repetiria
-(linhas duplicadas nas tabelas `append`) ou mandaria o evento para o destino on-failure, e reprocessá-lo
-duplicaria as linhas outra vez.
+After the write nothing can fail: the response (and the log text) is built and validated before writing.
+A failure after the write would mark the invocation as failed with the data already written; AWS would retry
+(duplicate rows in `append` tables) or send the event to the on-failure destination, and reprocessing it
+would duplicate the rows again.
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from .report import Report
 
 log = logging.getLogger("cx2iceberg")
 
-# A resposta leva só contagens (sem exemplos): tem de caber nos limites da AWS (6 MB síncrono, 256 KB nos destinos
-# assíncronos). O relatório completo vai para o log.
+# The response carries only counts (no examples): it must fit within AWS limits (6 MB synchronous, 256 KB for
+# asynchronous destinations). The full report goes to the log.
 MAX_REJECTED_IN_RESPONSE = 100
 
 
@@ -57,26 +57,26 @@ def handler(event, context):
     report = Report()
     engine = Engine(cfg, report=report)
     try:
-        results = engine.run(list(read_documents(sources, cfg.input)))   # documento rejeitado -> excepção
+        results = engine.run(list(read_documents(sources, cfg.input)))   # a rejected document -> exception
     except TransformError:
         log.error("%s", report.render())
         raise
-    # tudo o que pode falhar acontece antes da escrita
+    # everything that can fail happens before the write
     summary = report.to_dict(examples=0, max_rejected=MAX_REJECTED_IN_RESPONSE)
-    json.dumps(summary, allow_nan=False)          # falha aqui (nada escrito) se algum valor não for JSON estrito
+    json.dumps(summary, allow_nan=False)          # fails here (nothing written) if any value is not strict JSON
     try:
         written = write_athena(cfg, results, report=report)   # dict[str, int]
     except Exception:
         report.finish_write()
-        log.error("%s", report.render())          # o que foi escrito e o que falhou
+        log.error("%s", report.render())          # what was written and what failed
         raise
-    summary["write"] = report.write                # só texto e inteiros (construído pelo relatório)
+    summary["write"] = report.write                # only text and integers (built by the report)
     summary["status"] = report.status
-    # o nível por omissão dos logs na Lambda é WARNING: com perdas declaradas ou avisos, o relatório tem de lá
-    # chegar (numa invocação assíncrona a resposta é descartada, a não ser com um destino configurado)
-    try:                                           # depois da escrita nada pode falhar (ver docstring)
+    # the default log level in Lambda is WARNING: with declared losses or warnings, the report must reach the
+    # log (in an asynchronous invocation the response is discarded, unless a destination is configured)
+    try:                                           # after the write nothing can fail (see docstring)
         text = report.render()
     except Exception:  # noqa: BLE001
-        text = f"relatório indisponível (estado={report.status})"
+        text = f"report unavailable (status={report.status})"
     log.log(logging.WARNING if report.groups else logging.INFO, "%s", text)
     return {"status": report.status, "written": written, "report": summary}

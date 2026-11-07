@@ -1,11 +1,11 @@
-"""Notas das conversões e definições da carga, sem as passar como argumento por todas as funções.
+"""Notes from the conversions and the load's settings, without passing them as an argument through every function.
 
-* `note(...)`: uma transformação ou um cast regista uma perda declarada ou um aviso (ex.: valor arredondado
-  com `rounding` declarado, nulos ignorados com `sum: {nulls: skip}`, unidade de fallback). O motor recolhe as
-  notas de cada valor e põe-nas no relatório, com tabela, coluna, ficheiro e linha. Fora do motor são ignoradas.
-* `setting(...)`: definições da carga (ex.: `input.naive_timestamps`), visíveis nas conversões.
+* `note(...)`: a transformation or a cast records a declared loss or a warning (e.g. a value rounded
+  with `rounding` declared, nulls skipped with `sum: {nulls: skip}`, a fallback unit). The engine collects the
+  notes of each value and puts them in the report, with table, column, file and row. Outside the engine they are ignored.
+* `setting(...)`: the load's settings (e.g. `input.naive_timestamps`), visible in the conversions.
 
-Usa contextvars: cada carga (e cada thread) tem as suas.
+Uses contextvars: each load (and each thread) has its own.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def setting(name: str, default: Any = None) -> Any:
 
 @contextmanager
 def scope(settings: dict | None = None) -> Iterator[list]:
-    """Activa a recolha de notas (e as definições) durante uma carga. Devolve a lista de notas."""
+    """Turns on the collection of notes (and the settings) during a load. Returns the list of notes."""
     notes: list = []
     t1, t2 = _NOTES.set(notes), _SETTINGS.set(dict(settings or {}))
     try:

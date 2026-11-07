@@ -1,9 +1,9 @@
-"""Catálogo de submodelos Catena-X (repositório eclipse-tractusx/sldt-semantic-models).
+"""Catalog of Catena-X submodels (the eclipse-tractusx/sldt-semantic-models repository).
 
-Lê a lista de modelos com uma única chamada à API do GitHub (árvore do repositório,
-guardada em cache 24 h) ou a partir de um clone local (`models_dir`). Descarrega o schema
-(`gen/<Aspect>-schema.json`), o exemplo (`gen/<Aspect>.json`) e o `metadata.json` de uma
-versão para `<root>/models/<modelo>/<versão>/`, para ficarem junto às configurações.
+Reads the list of models with a single call to the GitHub API (the repository tree,
+cached for 24 h) or from a local clone (`models_dir`). Downloads the schema
+(`gen/<Aspect>-schema.json`), the example (`gen/<Aspect>.json`) and the `metadata.json` of a
+version to `<root>/models/<model>/<version>/`, so they sit next to the configurations.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class Catalog:
         self.models_dir = Path(models_dir) if models_dir else None
         self.cache = self.root / ".cx2iceberg"
 
-    # --- fontes -----------------------------------------------------------
+    # --- sources ----------------------------------------------------------
     def _http(self, url: str) -> bytes:
         headers = {"User-Agent": "cx2iceberg", "Accept": "application/vnd.github+json"}
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -54,11 +54,11 @@ class Catalog:
                 return r.read()
         except urllib.error.HTTPError as e:
             if e.code == 403 and "rate limit" in e.read().decode("utf-8", "replace").lower():
-                raise CatalogError("Limite de pedidos à API do GitHub atingido. Defina GITHUB_TOKEN ou use um clone local "
+                raise CatalogError("GitHub API rate limit reached. Set GITHUB_TOKEN or use a local clone "
                                    "(cx2iceberg studio --models-dir).") from e
-            raise CatalogError(f"GitHub respondeu {e.code} para {url}") from e
+            raise CatalogError(f"GitHub answered {e.code} for {url}") from e
         except urllib.error.URLError as e:
-            raise CatalogError(f"Sem acesso ao GitHub ({e.reason}). Use um clone local com --models-dir.") from e
+            raise CatalogError(f"No access to GitHub ({e.reason}). Use a local clone with --models-dir.") from e
 
     def _paths(self, refresh: bool = False) -> list[str]:
         if self.models_dir:
@@ -76,11 +76,11 @@ class Catalog:
         if self.models_dir:
             p = self.models_dir / rel
             if not p.is_file():
-                raise CatalogError(f"Não existe no clone local: {rel}")
+                raise CatalogError(f"Not found in the local clone: {rel}")
             return p.read_bytes()
         return self._http(RAW_URL + rel)
 
-    # --- consulta ---------------------------------------------------------
+    # --- queries ----------------------------------------------------------
     def models(self, refresh: bool = False) -> list[dict]:
         paths = set(self._paths(refresh))
         found: dict[str, dict] = {}
@@ -106,7 +106,7 @@ class Catalog:
                 for v in m["versions"]:
                     if v["version"] == version:
                         return v
-        raise CatalogError(f"Submodelo desconhecido: {model} {version}")
+        raise CatalogError(f"Unknown submodel: {model} {version}")
 
     def status(self, model: str, versions: list[str]) -> dict[str, str | None]:
         out = {}
@@ -122,7 +122,7 @@ class Catalog:
         return out
 
     def download(self, model: str, version: str) -> dict:
-        info = self._version(model, version)  # valida o par modelo/versão contra o catálogo
+        info = self._version(model, version)  # validates the model/version pair against the catalog
         aspect = info["aspect"]
         dest = self.root / "models" / model / version
         dest.mkdir(parents=True, exist_ok=True)

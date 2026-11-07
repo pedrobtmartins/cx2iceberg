@@ -32,14 +32,14 @@ def run(tables, docs=None, **sub):
     return Engine(cfg).run([Document(d, "f.json", "urn:x") for d in (docs or [SERIAL])])
 
 
-# --- caminhos ------------------------------------------------------------
+# --- paths --------------------------------------------------------------
 def test_paths():
     assert resolve_obj(SERIAL, "partTypeInformation.nameAtManufacturer") == "Mirror"
     assert resolve_obj(SERIAL, "localIdentifiers[?key=manufacturerId].value") == ["BPNL1"]
     assert resolve_obj(SERIAL, "localIdentifiers[-1].key") == "manufacturerId"
     assert resolve_obj(SERIAL, "orders[*].lines[*].sku") == ["x", "y", "z"]
     assert resolve_obj(SERIAL, "orders[?no~^B].no") == ["B"]
-    assert resolve_obj(SERIAL, "nope.nada") is MISSING
+    assert resolve_obj(SERIAL, "nope.nothing") is MISSING
     assert resolve_obj({"a.b": 1}, "['a.b']") == 1
 
 
@@ -53,7 +53,7 @@ def test_context_prefixes():
     assert resolve(ctx, "$meta.source_file") == "f"
 
 
-# --- transformações --------------------------------------------------------
+# --- transformations --------------------------------------------------------
 @pytest.mark.parametrize("value,chain,expected", [
     ("urn:uuid:123", "urn_suffix", "123"),
     ("  Ab ", ["trim", "lower"], "ab"),
@@ -75,8 +75,8 @@ def test_transforms(value, chain, expected):
 
 
 def test_unknown_transform():
-    with pytest.raises(ValueError, match="desconhecida"):
-        apply_chain(1, "nao_existe")
+    with pytest.raises(ValueError, match="Unknown transformation"):
+        apply_chain(1, "does_not_exist")
 
 
 # --- motor ---------------------------------------------------------------
@@ -98,7 +98,7 @@ def test_short_form_and_types():
 def test_nested_explode_with_parent_and_where():
     r = run([{"name": "lines", "explode": "orders[*].lines[*]",
               "where": {"path": "qty", "op": "gte", "value": 2},
-              "columns": {"order": "$parent.no", "order_idx": "$parent.$index :: int",  # com espaços também é aceite
+              "columns": {"order": "$parent.no", "order_idx": "$parent.$index :: int",  # with spaces it is accepted too
                           "line_idx": "$index :: int", "sku": "sku", "qty": "qty"}}])["lines"]
     assert [(x["order"], x["sku"], x["qty"]) for x in r.rows] == [("A", "y", 2.0), ("B", "z", 3.5)]
     assert r.types["qty"] == "double"
@@ -109,8 +109,8 @@ def test_keep_empty_explode():
                                                             "keep_empty": True, "columns": {"id": "$root.catenaXId", "std": "classificationStandard"}}]}]})
     eng = Engine(cfg)
     r = eng.run([Document(SERIAL, "f.json", "urn:x")])["c"]
-    assert r.rows == [{"id": "urn:uuid:abc"}]       # a linha existe (keep_empty)
-    # 'std' não tem tipo e só tem nulos neste lote: não é criada (o tipo seria adivinhado) e fica no relatório
+    assert r.rows == [{"id": "urn:uuid:abc"}]       # the row exists (keep_empty)
+    # 'std' has no type and only nulls in this batch: it is not created (the type would be guessed) and it is in the report
     assert "std" not in r.types and eng.report.count(reason="untyped_all_null", column="std") == 1
 
 
@@ -120,12 +120,12 @@ def test_on_error_modes():
     assert [r["q"] for r in run([cols("null")], bad)["t"].rows] == [None, 3]
     res = run([cols("skip_row")], bad)["t"]
     assert [r["id"] for r in res.rows] == ["2"] and res.skipped == 1
-    with pytest.raises(TransformError, match="coluna 'q'"):
+    with pytest.raises(TransformError, match="column 'q'"):
         run([cols("fail")], bad)
 
 
 def test_int_cast_does_not_truncate():
-    with pytest.raises(TransformError, match="não é inteiro"):
+    with pytest.raises(TransformError, match="is not an integer"):
         run([{"name": "t", "columns": {"q": {"const": 2.5, "type": "int"}}}])
 
 
@@ -146,7 +146,7 @@ def test_auto_flatten():
 def test_auto_normalize_tables_and_collisions():
     doc = {"catenaXId": "P", "createdOn": "2022-02-03T14:48:54.709Z",
            "childItems": [{"catenaXId": "C1", "sub": [{"k": 1}]}, {"catenaXId": "C2"}]}
-    # children: batch — sem model.schema tem de ser declarado (as filhas vêm só das listas do lote)
+    # children: batch — without model.schema it must be declared (the children only come from the batch's lists)
     res = run([], [doc], auto_normalize={"table_prefix": "bom", "children": "batch"}, defaults={"mode": "merge"})
     assert set(res) == {"bom", "bom_child_items", "bom_child_items_sub"}
     assert res["bom"].types["created_on"] == "timestamp"
@@ -172,15 +172,15 @@ def test_matching():
         Document({"x": 3}, "3.json", None),
     ])
     assert [d.source_file for d in routed["a"]] == ["1.json"]
-    assert [d.source_file for d in routed["b"]] == ["2.json"]  # lista vazia conta como existente
+    assert [d.source_file for d in routed["b"]] == ["2.json"]  # an empty list counts as existing
 
 
-# --- configuração ----------------------------------------------------------
+# --- configuration ----------------------------------------------------------
 @pytest.mark.parametrize("raw,msg", [
-    ({"submodels": [{"tables": [{"name": "t", "colums": {}}]}]}, "desconhecida"),
-    ({"submodels": [{"tables": [{"name": "t", "mode": "merge", "columns": {"a": "a"}}]}]}, "precisa de 'keys'"),
-    ({"submodels": [{"tables": [{"name": "t", "columns": {"a": {"type": "uuid"}}}]}]}, "não suportado"),
-    ({"submodels": []}, "não há"),
+    ({"submodels": [{"tables": [{"name": "t", "colums": {}}]}]}, "unknown"),
+    ({"submodels": [{"tables": [{"name": "t", "mode": "merge", "columns": {"a": "a"}}]}]}, "needs 'keys'"),
+    ({"submodels": [{"tables": [{"name": "t", "columns": {"a": {"type": "uuid"}}}]}]}, "Unsupported"),
+    ({"submodels": []}, "there are no"),
 ])
 def test_config_errors(raw, msg):
     with pytest.raises((ConfigError, ValueError), match=msg):
@@ -212,7 +212,7 @@ def test_env_expansion(tmp_path, monkeypatch):
     assert cfg.target == {"database": "prod_db", "workgroup": "primary"}
 
 
-# --- exemplo completo + escrita -------------------------------------------
+# --- full example + write -------------------------------------------
 def test_example_config_end_to_end(tmp_path):
     from cx2iceberg.writer import ddl, write_local
 
@@ -233,7 +233,7 @@ def fake_wr(monkeypatch):
     calls = {"to_iceberg": [], "sql": []}
     wr = types.SimpleNamespace(
         catalog=types.SimpleNamespace(create_database=lambda *a, **k: None, does_table_exist=lambda **k: True,
-                                  get_table_types=lambda **k: {}),   # o escritor lê o catálogo
+                                  get_table_types=lambda **k: {}),   # the writer reads the catalog
         athena=types.SimpleNamespace(
             to_iceberg=lambda **k: calls["to_iceberg"].append(k),
             start_query_execution=lambda sql, **k: calls["sql"].append(sql),
@@ -261,7 +261,7 @@ def test_athena_writer_calls(fake_wr):
                for s in fake_wr["sql"])
 
 
-# --- unwrap / nomes curtos / struct / schema SAMM -------------------------
+# --- unwrap / short names / struct / SAMM schema -------------------------
 from cx2iceberg import athena_types as AT  # noqa: E402
 from cx2iceberg.engine import column_names, unwrap  # noqa: E402
 from cx2iceberg.config import parse_unwrap  # noqa: E402
@@ -281,11 +281,11 @@ def test_unwrap_rules():
     assert r["general"] == {"comment": "c"} and r["stages"]["production"]["fossil"] == 1.0
     assert len(r["attest"]) == 2 and r["ids"] == ["x", "y"] and r["empty"] == []
     assert unwrap(NESTED, parse_unwrap(["general", "empty"], "u"))["empty"] is None
-    with pytest.raises(TransformError, match="'attest' tem 2 elementos"):
+    with pytest.raises(TransformError, match="'attest' has 2 elements"):
         unwrap(NESTED, parse_unwrap("*", "u"), "f.json")
     first = unwrap(NESTED, parse_unwrap({"all": True, "on_multiple": "first"}, "u"))
     assert first["attest"] == {"name": "a"}
-    with pytest.raises(ConfigError, match="não levam índices"):
+    with pytest.raises(ConfigError, match="take no indices"):
         parse_unwrap(["general[0]"], "u")
 
 
@@ -309,7 +309,7 @@ NESTED_SCHEMA = {"type": "object", "properties": {
 
 
 def test_unwrap_with_auto_normalize_and_leaf_naming(tmp_path):
-    # naming: leaf precisa de model.schema (os nomes vêm do modelo, não dos campos de cada documento)
+    # naming: leaf needs model.schema (the names come from the model, not from each document's fields)
     (tmp_path / "m.json").write_text(json.dumps(NESTED_SCHEMA))
     cfg = from_dict({"submodels": [{"name": "s", "model": {"schema": "m.json"}, "unwrap": {"all": True, "except": ["attest"]},
                                     "auto_normalize": {"table_prefix": "t", "id_path": "id", "id_column": "doc_id",
@@ -335,7 +335,7 @@ def test_struct_cast():
     t = "struct<fossil_ghg:double, created:timestamp, tags:array<string>>"
     v = AT.cast([{"fossilGhg": "1.5", "created": "2022-01-01T00:00:00Z", "tags": "a", "extra": 1}], t)
     assert v == {"fossil_ghg": 1.5, "created": datetime(2022, 1, 1), "tags": ["a"]}
-    with pytest.raises(ValueError, match="esperado 1 objecto"):
+    with pytest.raises(ValueError, match="expected 1 object"):
         AT.cast([{}, {}], t)
 
 
@@ -349,7 +349,7 @@ def test_struct_inference_columns():
     }}], [doc])["t"]
     assert res.types["stages"].startswith("struct<production:array<struct<fossil:double,land_mgmt:double>>")
     assert res.types["attest"] == "array<struct<name:string>>"
-    assert res.types["pre"] == "array<json>"  # struct vazio -> json (Athena não aceita struct<>)
+    assert res.types["pre"] == "array<json>"  # empty struct -> json (Athena does not accept struct<>)
     assert res.rows[0]["attest"] == [{"name": "a"}, {"name": "b"}]
 
 
@@ -382,7 +382,7 @@ def test_init_from_samm_schema_flat_and_struct():
     cols = struct["submodels"][0]["tables"][0]["columns"]
     assert cols["block"]["type"] == "struct<created:timestamp,version:bigint>"
     assert cols["codes"]["type"] == "array<string>"
-    # a configuração gerada corre sobre dados reais
+    # the generated configuration runs on real data
     cfg = from_dict({"submodels": struct["submodels"]})
     out = Engine(cfg).run([Document({"id": "1", "block": [{"created": "2024-01-01T00:00:00Z", "version": 3}], "codes": ["a"]})])
     assert out["demo"].rows[0]["block"] == {"created": datetime(2024, 1, 1), "version": 3}
@@ -390,7 +390,7 @@ def test_init_from_samm_schema_flat_and_struct():
 
 @pytest.mark.parametrize("cfg_file,n_tables", [("pcf9_flat.yaml", 9), ("pcf9_struct.yaml", 1)])
 def test_pcf9_examples(cfg_file, n_tables):
-    wr = pytest.importorskip("awswrangler")       # extra [dev]: sem ele o teste é saltado, não falha
+    wr = pytest.importorskip("awswrangler")       # extra [dev]: without it the test is skipped, it does not fail
     pa = pytest.importorskip("pyarrow")
 
     from cx2iceberg.athena_types import athena_type
@@ -401,7 +401,7 @@ def test_pcf9_examples(cfg_file, n_tables):
     assert len(res) == n_tables
     main = res["pcf9"].rows[0]
     assert main["pcf9_id"] == "3893bb5d-da16-4dc1-9185-11d97476c254"
-    for r in res.values():  # o schema tem de ser aceite pelo pyarrow como o awswrangler o constrói
+    for r in res.values():  # the schema must be accepted by pyarrow the way awswrangler builds it
         df = to_dataframe(r)
         schema = wr._data_types.pyarrow_schema_from_pandas(df, index=False, dtype={c: athena_type(t) for c, t in r.types.items()})
         pa.Table.from_pandas(df, schema=schema, preserve_index=False)
@@ -422,7 +422,7 @@ def _load(p):
     return _json.loads(Path(p).read_text())
 
 
-# --- cases / check / map sem maiúsculas -------------------------------------
+# --- cases / check / case-insensitive map -------------------------------------
 def test_cases_conditional_values():
     cols = {"lu": "lu", "emissions": {"cases": [
         {"when": {"path": "lu", "op": "gte", "value": 0}, "path": "lu"},
@@ -433,7 +433,7 @@ def test_cases_conditional_values():
     rows = run([{"name": "t", "columns": cols}], [{"lu": 2}, {"lu": -3}, {"lu": -1, "kind": "x"}])["t"].rows
     assert [r["emissions"] for r in rows] == [2.0, 0.0, -1.0]
     assert [r["label"] for r in rows] == [None, "NEG:-3", "NEG:-1"]
-    with pytest.raises(ConfigError, match="falta a origem"):
+    with pytest.raises(ConfigError, match="source is missing"):
         from_dict({"submodels": [{"tables": [{"name": "t", "columns": {"a": {"cases": [{"when": {"path": "x"}}]}}}]}]})
 
 
@@ -451,7 +451,7 @@ def test_checks():
     assert len(res.rows) == 2 and res.skipped == 1
     assert res.rows[1]["share"] is None and res.rows[1]["bpn"] == ["x"]       # null vs warn
     assert res.check_failures == {"bpn": 1, "share": 1, "alloc": 1, "bio": 1}
-    with pytest.raises(TransformError, match="não está na lista"):
+    with pytest.raises(TransformError, match="is not in the list"):
         run([{"name": "t", "columns": {"a": {"path": "a", "check": {"in": ["x"], "on_fail": "fail"}}}}], [{"a": "y"}])
 
 
@@ -467,14 +467,14 @@ def test_pcf_v7_to_v9_example():
     r9 = Engine(cfg).run([Document(_load(EX / "data" / "pcf_9.json"), "9.json")])["pcf"]
     a, b = r7.rows[0], r9.rows[0]
     assert a["source_model"] == "7.0.0" and b["source_model"] == "9.0.0"
-    assert set(r7.types) == set(r9.types)                       # as duas versões produzem as mesmas colunas
+    assert set(r7.types) == set(r9.types)                       # both versions produce the same columns
     assert a["declared_unit_of_measurement"] == "liter" and a["cross_sectoral_standards"] == ["ISO Standard 14067"]
     assert a["land_management_biogenic_co2_emissions"] == 0.3 and a["land_management_biogenic_co2_removals"] == 0.0
     assert a["product_classifications"] == ["urn:cpc:011-99000"]
     assert r7.check_failures == {"company_ids": 1} and not r9.check_failures
 
 
-# --- document_id (UUID que liga as tabelas de um documento) -------------------
+# --- document_id (the UUID that links a document's tables) -------------------
 def _uuids(res):
     return {t: [r["doc_id"] for r in r_.rows] for t, r_ in res.items()}
 
@@ -484,12 +484,12 @@ def test_document_id_key_is_deterministic_and_shared():
               {"name": "lines", "explode": "orders[*].lines", "columns": {"sku": "sku"}}]
     did = {"column": "doc_id", "from": "catenaXId"}
     a = run(tables, [SERIAL, {**SERIAL, "catenaXId": "urn:uuid:other"}], document_id=did)
-    b = run(tables, [{**SERIAL, "partTypeInformation": {}}], document_id=did)   # conteúdo diferente, mesma chave
+    b = run(tables, [{**SERIAL, "partTypeInformation": {}}], document_id=did)   # different content, same key
     ua = _uuids(a)
     assert len(set(ua["head"])) == 2
-    assert set(ua["lines"]) == set(ua["head"])                        # o mesmo UUID nas duas tabelas
+    assert set(ua["lines"]) == set(ua["head"])                        # the same UUID in both tables
     assert ua["lines"][:3] == [ua["head"][0]] * 3
-    assert _uuids(b)["head"][0] == ua["head"][0]                     # determinístico
+    assert _uuids(b)["head"][0] == ua["head"][0]                     # deterministic
     import uuid as _uuid
     assert _uuid.UUID(ua["head"][0]).version == 5
     assert a["head"].types["doc_id"] == "string" and list(a["head"].types)[0] == "doc_id"
@@ -500,15 +500,15 @@ def test_document_id_strategies_and_fallback(caplog):
     c1 = run(t, [{"x": 1}], document_id=True)["t"].rows[0]["document_id"]
     c2 = run(t, [{"x": 1}], document_id=True)["t"].rows[0]["document_id"]
     c3 = run(t, [{"x": 2}], document_id=True)["t"].rows[0]["document_id"]
-    assert c1 == c2 != c3                                             # content: muda com o conteúdo
+    assert c1 == c2 != c3                                             # content: changes with the content
     r = run(t, [{"x": 1}], document_id={"strategy": "random"})["t"].rows[0]["document_id"]
     assert r != run(t, [{"x": 1}], document_id={"strategy": "random"})["t"].rows[0]["document_id"]
-    # chave em falta: por omissão o documento é rejeitado (o UUID mudaria quando o campo aparecesse)
-    with pytest.raises(TransformError, match="document_id: campo\\(s\\) \\['id'\\] em falta"):
+    # missing key: by default the document is rejected (the UUID would change once the field appeared)
+    with pytest.raises(TransformError, match="document_id: field\\(s\\) \\['id'\\] missing"):
         run(t, [{"x": 1}], document_id={"from": "id"})
     fb = run(t, [{"x": 1}], document_id={"from": "id", "on_missing": "content"})["t"].rows[0]["document_id"]
-    assert fb == c1 and "em falta" in caplog.text                   # declarado: conteúdo, com aviso
-    ns = run(t, [{"x": 1}], document_id={"namespace": "outro"})["t"].rows[0]["document_id"]
+    assert fb == c1 and "missing" in caplog.text                   # declared: content, with a warning
+    ns = run(t, [{"x": 1}], document_id={"namespace": "other"})["t"].rows[0]["document_id"]
     assert ns != c1
 
 
@@ -516,14 +516,14 @@ def test_document_id_with_unwrap_and_auto_normalize():
     doc = {"block": [{"id": "A", "items": [{"k": 1}, {"k": 2}]}]}
     res = run([], [doc], unwrap={"paths": ["block"]}, document_id={"column": "doc_id", "from": "block.id"},
               auto_normalize={"table_prefix": "d", "children": "batch"})
-    assert res["d"].spec.keys == ["doc_id"]                          # sem id_path: o UUID é a chave
+    assert res["d"].spec.keys == ["doc_id"]                          # no id_path: the UUID is the key
     child = res["d_block_items"]
     assert child.spec.keys[0] == "doc_id" and child.spec.replace_by == ["doc_id"]
     assert {r["doc_id"] for r in child.rows} == {res["d"].rows[0]["doc_id"]}
 
 
-@pytest.mark.parametrize("did,msg", [({"strategy": "key"}, "precisa de 'from'"), ({"strategy": "x"}, "strategy"),
-                                     ({"colum": "x"}, "desconhecida")])
+@pytest.mark.parametrize("did,msg", [({"strategy": "key"}, "needs 'from'"), ({"strategy": "x"}, "strategy"),
+                                     ({"colum": "x"}, "unknown")])
 def test_document_id_config_errors(did, msg):
     with pytest.raises(ConfigError, match=msg):
         from_dict({"submodels": [{"document_id": did, "tables": [{"name": "t", "auto": True}]}]})

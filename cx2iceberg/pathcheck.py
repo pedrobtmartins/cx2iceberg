@@ -1,21 +1,21 @@
-"""Validação dos caminhos ao carregar a configuração (antes de ler qualquer documento).
+"""Validation of the paths when the configuration is loaded (before any document is read).
 
-Sempre:
-    * todos os caminhos têm de ser válidos (colunas, paths, templates, cases, where, check.required_if,
-      explode, document_id.from) — antes um caminho mal formado só falhava nos dados;
-    * `$parent` não pode subir acima da raiz (a tabela tem N níveis de explode);
-    * `$index` só existe em tabelas com explode;
-    * `$meta.<chave>` tem de ser uma das chaves conhecidas (`document_id` só com document_id declarado).
+Always:
+    * every path must be valid (columns, paths, templates, cases, where, check.required_if,
+      explode, document_id.from) — before, a malformed path only failed on the data;
+    * `$parent` cannot go above the root (the table has N explode levels);
+    * `$index` only exists in tables with an explode;
+    * `$meta.<key>` must be one of the known keys (`document_id` only with document_id declared).
 
-Com `model.schema` no submodelo, cada caminho é percorrido no schema, já com o `unwrap` aplicado:
-    * campo que não existe no modelo (com sugestão do nome mais parecido);
-    * campo pedido a uma lista sem [*], índice pedido a uma lista que o unwrap transforma em objecto;
-    * explode que não aponta para uma lista;
-    * caminhos do `unwrap` que não existem ou não são listas.
-Uma coluna com `outside_model: true` não é verificada contra o modelo (ex.: campo de extensão fora do schema).
-Objectos sem `properties` (ou com `additionalProperties` permitido explicitamente) são abertos: não se verificam.
-Nos schemas SAMM as propriedades estão declaradas, e um campo fora delas é quase sempre um erro de escrita.
-Os caminhos do `match` não são verificados: servem para reconhecer documentos de outras versões.
+With `model.schema` on the submodel, each path is walked in the schema, with the `unwrap` already applied:
+    * a field that does not exist in the model (with a suggestion of the closest name);
+    * a field asked of a list without [*], an index asked of a list the unwrap turns into an object;
+    * an explode that does not point to a list;
+    * `unwrap` paths that do not exist or are not lists.
+A column with `outside_model: true` is not checked against the model (e.g. an extension field outside the schema).
+Objects without `properties` (or with `additionalProperties` explicitly allowed) are open: they are not checked.
+In SAMM schemas the properties are declared, and a field outside them is almost always a typo.
+The `match` paths are not checked: they serve to recognise documents of other versions.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ META_KEYS = {"source_file", "semantic_id", "ingested_at"}
 MAX_PROBLEMS = 40
 
 
-# --- recolha dos caminhos --------------------------------------------------------
+# --- collecting the paths --------------------------------------------------------
 def _cond_paths(cond: Any) -> Iterator[str]:
     if cond is None:
         return
@@ -60,7 +60,7 @@ def _source_paths(col) -> Iterator[str]:
 
 
 def column_paths(col) -> Iterator[tuple[str, bool]]:
-    """(caminho, verificar contra o modelo?) de uma coluna."""
+    """(path, check against the model?) of a column."""
     check_model = not col.outside_model
     for p in _source_paths(col):
         yield p, check_model
@@ -74,13 +74,13 @@ def column_paths(col) -> Iterator[tuple[str, bool]]:
             yield p, True
 
 
-# --- schema do modelo --------------------------------------------------------------
+# --- the model's schema --------------------------------------------------------------
 @dataclass
 class Pos:
-    node: dict | None          # nó do schema já resolvido; None = desconhecido (não se verifica daí para baixo)
-    raw: str                   # caminho só com chaves (o que o unwrap usa)
-    unwrapped: bool = False    # lista que o unwrap transforma no seu único elemento
-    source: dict | None = None  # o mesmo nó por resolver (com todas as alternativas oneOf/anyOf)
+    node: dict | None          # schema node already resolved; None = unknown (not checked from there down)
+    raw: str                   # path with keys only (what the unwrap uses)
+    unwrapped: bool = False    # a list the unwrap turns into its single element
+    source: dict | None = None  # the same node unresolved (with every oneOf/anyOf alternative)
 
 
 class Problem(Exception):
@@ -89,7 +89,7 @@ class Problem(Exception):
 
 class SchemaWalker:
     def __init__(self, schema: dict, rule: dict | None):
-        from .samm import _merge_all_of  # noqa: PLC0415 - evitar import circular
+        from .samm import _merge_all_of  # noqa: PLC0415 - avoids a circular import
 
         self._merge = _merge_all_of
         self.comps = schema.get("components", {}).get("schemas", {})
@@ -127,43 +127,43 @@ class SchemaWalker:
             if pos.node is None:
                 return pos
             n, k = pos.node, self.kind(pos.node)
-            where = f" em '{shown}'" if shown else ""
+            where = f" in '{shown}'" if shown else ""
             if step.kind == "key":
                 if k == "array":
-                    raise Problem(f"'{shown}' é uma lista no modelo: use '{shown}[*].{step.value}'")
+                    raise Problem(f"'{shown}' is a list in the model: use '{shown}[*].{step.value}'")
                 if k == "scalar":
-                    raise Problem(f"'{shown}' é um valor simples no modelo: não tem o campo '{step.value}'")
+                    raise Problem(f"'{shown}' is a simple value in the model: it has no field '{step.value}'")
                 props = n.get("properties") or {}
                 if step.value not in props:
                     extra = n.get("additionalProperties")
                     if not props or extra is True or isinstance(extra, dict):
-                        return Pos(None, pos.raw)   # objecto aberto (sem propriedades declaradas): não se verifica
+                        return Pos(None, pos.raw)   # open object (no declared properties): not checked
                     near = difflib.get_close_matches(step.value, list(props), n=1)
-                    hint = f" Quis dizer '{near[0]}'?" if near else ""
-                    raise Problem(f"o campo '{step.value}' não existe no modelo{where}.{hint}")
+                    hint = f" Did you mean '{near[0]}'?" if near else ""
+                    raise Problem(f"field '{step.value}' does not exist in the model{where}.{hint}")
                 raw = f"{pos.raw}.{step.value}" if pos.raw else step.value
                 pos = self.pos(props[step.value], raw)
             elif step.kind in ("star", "filter"):
                 if pos.unwrapped:
                     if step.kind == "star":
-                        return Pos(None, pos.raw)       # [*] sobre um objecto: os seus valores (não se verifica)
+                        return Pos(None, pos.raw)       # [*] on an object: its values (not checked)
                 elif k == "array":
                     pos = self.pos(n.get("items", {}), pos.raw)
                 else:
-                    raise Problem(f"{step.text} pedido a '{shown}', que não é uma lista no modelo")
+                    raise Problem(f"{step.text} asked of '{shown}', which is not a list in the model")
                 if step.kind == "filter":
-                    self.walk(pos, step.value[0])       # o campo do filtro existe nos elementos
+                    self.walk(pos, step.value[0])       # the filter's field exists in the elements
             elif step.kind == "idx":
                 if pos.unwrapped:
-                    raise Problem(f"'{shown}' é desembrulhada pelo unwrap (fica um objecto): retire o índice {step.text}")
+                    raise Problem(f"'{shown}' is unwrapped by the unwrap (it becomes an object): remove the index {step.text}")
                 if k != "array":
-                    raise Problem(f"índice {step.text} pedido a '{shown}', que não é uma lista no modelo")
+                    raise Problem(f"index {step.text} asked of '{shown}', which is not a list in the model")
                 pos = self.pos(n.get("items", {}), pos.raw)
             shown += step.text if step.kind != "key" or not shown else f".{step.text}"
         return pos
 
 
-# --- validação --------------------------------------------------------------------
+# --- validation --------------------------------------------------------------------
 def check_config(cfg) -> None:
     from .config import ConfigError  # noqa: PLC0415
 
@@ -190,13 +190,13 @@ def check_config(cfg) -> None:
             for p in _cond_paths(t.where):
                 _check(p, depth, levels, walker, sub, f"{where}.tables['{t.name}'].where", problems, True)
     if problems:
-        more = f"\n  … e mais {len(problems) - MAX_PROBLEMS}" if len(problems) > MAX_PROBLEMS else ""
-        raise ConfigError(f"{len(problems)} problema(s) nos caminhos:\n  " + "\n  ".join(problems[:MAX_PROBLEMS]) + more)
+        more = f"\n  … and {len(problems) - MAX_PROBLEMS} more" if len(problems) > MAX_PROBLEMS else ""
+        raise ConfigError(f"{len(problems)} problem(s) in the paths:\n  " + "\n  ".join(problems[:MAX_PROBLEMS]) + more)
 
 
 class LeafNames:
-    """Nomes leaf fixados a partir do modelo: caminho -> coluna, e coluna -> caminho (para detectar que um campo
-    fora do modelo, com o nome completo, ocuparia a coluna de um campo do modelo)."""
+    """Leaf names fixed from the model: path -> column, and column -> path (to detect that a field
+    outside the model, with its full name, would take the column of a model field)."""
 
     def __init__(self, names: dict[tuple[str, ...], str]):
         self.names = names
@@ -204,7 +204,7 @@ class LeafNames:
 
 
 def leaf_names_for(walker: SchemaWalker, pos: Pos, exclude: list[str], max_depth: int, lists: str) -> LeafNames:
-    from .engine import column_names  # noqa: PLC0415 - evitar import circular
+    from .engine import column_names  # noqa: PLC0415 - avoids a circular import
 
     return LeafNames(column_names(sorted(model_leaf_paths(walker, pos, exclude, max_depth, lists)), "leaf"))
 
@@ -216,8 +216,8 @@ def _fixed_leaf_names(walker: SchemaWalker, t, where: str, problems: list[str]) 
         problems.append(f"{where}: auto_naming: leaf — {e}")
         return None
     if pos is None:
-        problems.append(f"{where}: auto_naming: leaf — o modelo não descreve os elementos desta tabela (objecto aberto): "
-                        f"os nomes não podem ser fixados. Use auto_naming: full")
+        problems.append(f"{where}: auto_naming: leaf — the model does not describe this table's elements (open object): "
+                        f"the names cannot be fixed. Use auto_naming: full")
         return None
     return leaf_names_for(walker, pos, t.auto_exclude, t.auto_max_depth, t.auto_lists)
 
@@ -229,7 +229,7 @@ def _walker(cfg, sub, where: str, problems: list[str]) -> SchemaWalker | None:
     try:
         schema = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        problems.append(f"{where}.model.schema: não foi possível ler {path}: {e}")
+        problems.append(f"{where}.model.schema: could not read {path}: {e}")
         return None
     return SchemaWalker(schema, sub.unwrap)
 
@@ -242,11 +242,11 @@ def _check_unwrap_path(walker: SchemaWalker, p: str, where: str, problems: list[
         props = (node or {}).get("properties") or {}
         if key not in props:
             near = difflib.get_close_matches(key, list(props), n=1)
-            problems.append(f"{where}: '{p}' não existe no modelo" + (f" (quis dizer '{near[0]}'?)" if near else ""))
+            problems.append(f"{where}: '{p}' does not exist in the model" + (f" (did you mean '{near[0]}'?)" if near else ""))
             return
         node = walker.resolve(props[key])
     if walker.kind(node) != "array":
-        problems.append(f"{where}: '{p}' não é uma lista no modelo")
+        problems.append(f"{where}: '{p}' is not a list in the model")
 
 
 def _explode_positions(walker, t, where: str, problems: list[str]) -> list[Pos] | None:
@@ -265,7 +265,7 @@ def _explode_positions(walker, t, where: str, problems: list[str]) -> list[Pos] 
             return None
         if pos.node is not None and not pos.unwrapped:
             if walker.kind(pos.node) != "array":
-                problems.append(f"{where} '{lv}': não é uma lista no modelo")
+                problems.append(f"{where} '{lv}': is not a list in the model")
                 return None
             pos = walker.pos(pos.node.get("items", {}), pos.raw)
         levels.append(pos)
@@ -285,23 +285,23 @@ def _check(path: str, depth: int, levels: list[Pos] | None, walker, sub, where: 
            model: bool) -> None:
     from_root, up, rest = context_refs(path)
     if from_root and up:
-        problems.append(f"{where}: '{path}' — $parent depois de $root sobe acima da raiz")
+        problems.append(f"{where}: '{path}' — $parent after $root goes above the root")
         return
     if not from_root and up > depth:
-        problems.append(f"{where}: '{path}' sobe {up} nível(is) com $parent, mas a tabela só tem {depth} nível(is) de explode")
+        problems.append(f"{where}: '{path}' goes up {up} level(s) with $parent, but the table only has {depth} explode level(s)")
         return
     level = 0 if from_root else depth - up
     if rest == "$index":
         if level == 0:
-            problems.append(f"{where}: '{path}' — $index só existe em tabelas com explode (aqui é sempre nulo)")
+            problems.append(f"{where}: '{path}' — $index only exists in tables with an explode (here it is always null)")
         return
     if rest.startswith("$meta"):
         key = rest[len("$meta"):].lstrip(".")
         allowed = META_KEYS | ({"document_id"} if sub.document_id else set())
         if key and key not in allowed:
             near = difflib.get_close_matches(key, sorted(allowed), n=1)
-            problems.append(f"{where}: '{path}' — chave desconhecida em $meta. Disponíveis: {sorted(allowed)}"
-                            + (f" (quis dizer '{near[0]}'?)" if near else ""))
+            problems.append(f"{where}: '{path}' — unknown key in $meta. Available: {sorted(allowed)}"
+                            + (f" (did you mean '{near[0]}'?)" if near else ""))
         return
     if not rest:
         return
@@ -314,14 +314,14 @@ def _check(path: str, depth: int, levels: list[Pos] | None, walker, sub, where: 
             problems.append(f"{where}: '{path}' — {e}")
 
 
-# --- formas do modelo para o modo auto ------------------------------------------------------------
-# O modo auto (colunas `auto`, tabelas do `auto_normalize`) vê os campos presentes nos documentos. Duas decisões
-# não podem depender disso: os nomes `leaf` (o mesmo campo ia para `fossil` num documento e `ghg_fossil` noutro)
-# e as tabelas filhas do auto_normalize (uma lista que ficou vazia em todos os documentos do lote não gerava a
-# tabela, e as linhas antigas ficavam). Com `model.schema` ambas vêm do modelo, iguais em todas as cargas.
+# --- the model's shapes for auto mode ------------------------------------------------------------
+# Auto mode (`auto` columns, `auto_normalize` tables) sees the fields present in the documents. Two decisions
+# cannot depend on that: the `leaf` names (the same field went to `fossil` in one document and `ghg_fossil` in another)
+# and the auto_normalize child tables (a list that was empty in every document of the batch produced no
+# table, and the old rows stayed). With `model.schema` both come from the model, the same in every load.
 def variants(walker: SchemaWalker, node: dict | None, seen: tuple = ()) -> list[dict]:
-    """O nó em todas as suas formas: $ref seguido, allOf junto, e cada alternativa de oneOf/anyOf (o
-    SchemaWalker fica só com a primeira; aqui um campo que só existe na 2.ª alternativa também conta)."""
+    """The node in all its shapes: $ref followed, allOf merged, and each oneOf/anyOf alternative (the
+    SchemaWalker keeps only the first; here a field that only exists in the 2nd alternative also counts)."""
     node = node or {}
     if "$ref" in node:
         name = node["$ref"].rsplit("/", 1)[-1]
@@ -339,7 +339,7 @@ def variants(walker: SchemaWalker, node: dict | None, seen: tuple = ()) -> list[
 
 
 def _unwrapped(walker: SchemaWalker, raw: str, items: list[dict]) -> bool:
-    """A lista em `raw` é transformada em objecto pelo unwrap? (mesma regra que engine.unwrap)"""
+    """Is the list in `raw` turned into an object by the unwrap? (same rule as engine.unwrap)"""
     rule = walker.rule
     if not rule or raw in rule["except"]:
         return False
@@ -351,7 +351,7 @@ def _keeps_lists(walker: SchemaWalker) -> bool:
 
 
 def model_position(walker: SchemaWalker, explode: list[str]) -> Pos | None:
-    """Posição no modelo dos elementos de uma tabela com estes níveis de explode (None = o modelo não a descreve)."""
+    """Position in the model of the elements of a table with these explode levels (None = the model does not describe it)."""
     pos = walker.root
     for lv in explode:
         pos = walker.walk(pos, lv)
@@ -359,15 +359,15 @@ def model_position(walker: SchemaWalker, explode: list[str]) -> Pos | None:
             return None
         if not pos.unwrapped:
             if walker.kind(pos.node) != "array":
-                raise Problem(f"'{lv}' não é uma lista no modelo")
+                raise Problem(f"'{lv}' is not a list in the model")
             pos = walker.pos(pos.node.get("items", {}), pos.raw)
     return pos if pos.node is not None else None
 
 
 def model_leaf_paths(walker: SchemaWalker, pos: Pos, exclude: list[str], max_depth: int, lists: str) -> set[tuple[str, ...]]:
-    """Todos os caminhos que o modo auto (engine._leaves) pode dar a partir desta posição, em qualquer documento
-    válido. As regras são as mesmas: objectos até max_depth, listas de objectos não são colunas com lists=array."""
-    from .config import sanitize  # noqa: PLC0415 - evitar import circular
+    """Every path that auto mode (engine._leaves) can produce from this position, in any valid
+    document. The rules are the same: objects up to max_depth, lists of objects are not columns with lists=array."""
+    from .config import sanitize  # noqa: PLC0415 - avoids a circular import
 
     out: set[tuple[str, ...]] = set()
 
@@ -406,8 +406,8 @@ def model_leaf_paths(walker: SchemaWalker, pos: Pos, exclude: list[str], max_dep
 
 
 def model_list_paths(walker: SchemaWalker, max_depth: int) -> set[tuple[str, ...]]:
-    """As listas de objectos do modelo, no formato de engine._array_paths (um caminho por nível de explode),
-    já com o unwrap aplicado: as tabelas filhas que o auto_normalize pode gerar, haja ou não dados no lote."""
+    """The model's lists of objects, in the format of engine._array_paths (one path per explode level),
+    with the unwrap already applied: the child tables auto_normalize can generate, whether or not the batch has data."""
     found: set[tuple[str, ...]] = set()
 
     def walk(node: dict, raw: str, levels: tuple[str, ...], cur: tuple[str, ...], depth: int):

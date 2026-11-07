@@ -1,4 +1,4 @@
-"""Gera uma configuração inicial a partir de JSONs de exemplo ou do JSON Schema SAMM (`cx2iceberg init`)."""
+"""Generates an initial configuration from example JSONs or from the SAMM JSON Schema (`cx2iceberg init`)."""
 from __future__ import annotations
 
 from typing import Any
@@ -71,7 +71,7 @@ def scaffold(
     structs: bool = False,
     scalar_lists: str = "array",
 ) -> str:
-    """scalar_lists: 'array' (coluna array<...>) | 'rows' (tabela filha, 1 linha por valor)."""
+    """scalar_lists: 'array' (array<...> column) | 'rows' (child table, 1 row per value)."""
     rule = parse_unwrap(unwrap_rule, "unwrap") if unwrap_rule else None
     if rule:
         docs = [unwrap(d, rule) for d in docs]
@@ -115,11 +115,11 @@ def scaffold(
         "submodels": [sub],
     }
     header = (
-        "# Configuração gerada automaticamente por `cx2iceberg init`.\n"
-        "# Reveja nomes, tipos e chaves; remova as colunas que não interessam.\n"
-        "# Números sem tipo no schema são sugeridos como double (JSON não distingue 1 de 1.0).\n"
-        + ("" if idp else "# ATENÇÃO: não foi encontrado um id do documento — defina keys ou use --id-path.\n")
-        + "# Referência completa: README.md\n"
+        "# Configuration generated automatically by `cx2iceberg init`.\n"
+        "# Review names, types and keys; remove the columns you do not need.\n"
+        "# Numbers without a type in the schema are suggested as double (JSON does not tell 1 from 1.0).\n"
+        + ("" if idp else "# WARNING: no document id was found — define keys or use --id-path.\n")
+        + "# Full reference: README.md\n"
     )
     return header + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True, width=200)
 
@@ -161,7 +161,7 @@ def _child_table(levels, leaves, idp, id_col, naming, tname) -> dict:
         "keys": ([id_col] if idp else []) + idx,
         "columns": cols,
     }
-    if not leaves:  # entidade sem propriedades no modelo: apanhar o que vier nos dados
+    if not leaves:  # entity without properties in the model: take whatever comes in the data
         t["auto"] = True
     if idp:
         t.update(mode="append", replace_by=[id_col])
@@ -169,7 +169,7 @@ def _child_table(levels, leaves, idp, id_col, naming, tname) -> dict:
 
 
 def _struct_table(docs, prefix, idp, id_col) -> dict:
-    """1 tabela: escalares de topo como colunas, blocos como struct/array<struct> com tipo explícito."""
+    """1 table: top-level scalars as columns, blocks as struct/array<struct> with an explicit type."""
     top: dict[str, Any] = {}
     for d in docs:
         for k, v in d.items():
