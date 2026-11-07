@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 from datetime import datetime
@@ -104,9 +105,13 @@ def test_nested_explode_with_parent_and_where():
 
 
 def test_keep_empty_explode():
-    r = run([{"name": "c", "explode": "partTypeInformation.partClassification", "keep_empty": True,
-              "columns": {"id": "$root.catenaXId", "std": "classificationStandard"}}])["c"]
-    assert r.rows == [{"id": "urn:uuid:abc", "std": None}]
+    cfg = from_dict({"submodels": [{"name": "s", "tables": [{"name": "c", "explode": "partTypeInformation.partClassification",
+                                                            "keep_empty": True, "columns": {"id": "$root.catenaXId", "std": "classificationStandard"}}]}]})
+    eng = Engine(cfg)
+    r = eng.run([Document(SERIAL, "f.json", "urn:x")])["c"]
+    assert r.rows == [{"id": "urn:uuid:abc"}]       # a linha existe (keep_empty)
+    # 'std' não tem tipo e só tem nulos neste lote: não é criada (o tipo seria adivinhado) e fica no relatório
+    assert "std" not in r.types and eng.report.count(reason="untyped_all_null", column="std") == 1
 
 
 def test_on_error_modes():
@@ -141,7 +146,8 @@ def test_auto_flatten():
 def test_auto_normalize_tables_and_collisions():
     doc = {"catenaXId": "P", "createdOn": "2022-02-03T14:48:54.709Z",
            "childItems": [{"catenaXId": "C1", "sub": [{"k": 1}]}, {"catenaXId": "C2"}]}
-    res = run([], [doc], auto_normalize={"table_prefix": "bom"}, defaults={"mode": "merge"})
+    # children: batch — sem model.schema tem de ser declarado (as filhas vêm só das listas do lote)
+    res = run([], [doc], auto_normalize={"table_prefix": "bom", "children": "batch"}, defaults={"mode": "merge"})
     assert set(res) == {"bom", "bom_child_items", "bom_child_items_sub"}
     assert res["bom"].types["created_on"] == "timestamp"
     child = res["bom_child_items"]
@@ -226,7 +232,8 @@ def test_example_config_end_to_end(tmp_path):
 def fake_wr(monkeypatch):
     calls = {"to_iceberg": [], "sql": []}
     wr = types.SimpleNamespace(
-        catalog=types.SimpleNamespace(create_database=lambda *a, **k: None, does_table_exist=lambda **k: True),
+        catalog=types.SimpleNamespace(create_database=lambda *a, **k: None, does_table_exist=lambda **k: True,
+                                  get_table_types=lambda **k: {}),   # o escritor lê o catálogo
         athena=types.SimpleNamespace(
             to_iceberg=lambda **k: calls["to_iceberg"].append(k),
             start_query_execution=lambda sql, **k: calls["sql"].append(sql),
@@ -288,9 +295,26 @@ def test_leaf_naming_resolves_collisions():
                      ("stages", "packaging", "fossil"): "packaging_fossil", ("general", "comment"): "comment"}
 
 
-def test_unwrap_with_auto_normalize_and_leaf_naming():
-    res = run([], [NESTED], unwrap={"all": True, "except": ["attest"]},
-              auto_normalize={"table_prefix": "t", "id_path": "id", "id_column": "doc_id", "naming": "leaf"})
+_EM = {"type": "object", "properties": {"fossil": {"type": "number"}, "landMgmt": {"type": "number"}}}
+NESTED_SCHEMA = {"type": "object", "properties": {
+    "id": {"type": "string"},
+    "general": {"type": "array", "items": {"type": "object", "properties": {"comment": {"type": "string"}}}},
+    "stages": {"type": "array", "items": {"type": "object", "properties": {
+        "production": {"type": "array", "items": {"$ref": "#/components/schemas/Em"}},
+        "packaging": {"type": "array", "items": {"$ref": "#/components/schemas/Em"}}}}},
+    "attest": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}}}},
+    "ids": {"type": "array", "items": {"type": "string"}},
+    "empty": {"type": "array", "items": {"type": "object", "properties": {"z": {"type": "number"}}}}},
+    "components": {"schemas": {"Em": _EM}}}
+
+
+def test_unwrap_with_auto_normalize_and_leaf_naming(tmp_path):
+    # naming: leaf precisa de model.schema (os nomes vêm do modelo, não dos campos de cada documento)
+    (tmp_path / "m.json").write_text(json.dumps(NESTED_SCHEMA))
+    cfg = from_dict({"submodels": [{"name": "s", "model": {"schema": "m.json"}, "unwrap": {"all": True, "except": ["attest"]},
+                                    "auto_normalize": {"table_prefix": "t", "id_path": "id", "id_column": "doc_id",
+                                                       "naming": "leaf"}}]}, tmp_path)
+    res = Engine(cfg).run([Document(NESTED, "f.json", "urn:x")])
     assert set(res) == {"t", "t_attest"}
     row = res["t"].rows[0]
     assert row["comment"] == "c" and row["production_fossil"] == 1.0 and row["packaging_land_mgmt"] == 4.0
@@ -366,8 +390,8 @@ def test_init_from_samm_schema_flat_and_struct():
 
 @pytest.mark.parametrize("cfg_file,n_tables", [("pcf9_flat.yaml", 9), ("pcf9_struct.yaml", 1)])
 def test_pcf9_examples(cfg_file, n_tables):
-    import awswrangler as wr
-    import pyarrow as pa
+    wr = pytest.importorskip("awswrangler")       # extra [dev]: sem ele o teste é saltado, não falha
+    pa = pytest.importorskip("pyarrow")
 
     from cx2iceberg.athena_types import athena_type
     from cx2iceberg.writer import to_dataframe
@@ -479,8 +503,11 @@ def test_document_id_strategies_and_fallback(caplog):
     assert c1 == c2 != c3                                             # content: muda com o conteúdo
     r = run(t, [{"x": 1}], document_id={"strategy": "random"})["t"].rows[0]["document_id"]
     assert r != run(t, [{"x": 1}], document_id={"strategy": "random"})["t"].rows[0]["document_id"]
-    fb = run(t, [{"x": 1}], document_id={"from": "id"})["t"].rows[0]["document_id"]
-    assert fb == c1 and "em falta" in caplog.text                   # chave em falta -> conteúdo, com aviso
+    # chave em falta: por omissão o documento é rejeitado (o UUID mudaria quando o campo aparecesse)
+    with pytest.raises(TransformError, match="document_id: campo\\(s\\) \\['id'\\] em falta"):
+        run(t, [{"x": 1}], document_id={"from": "id"})
+    fb = run(t, [{"x": 1}], document_id={"from": "id", "on_missing": "content"})["t"].rows[0]["document_id"]
+    assert fb == c1 and "em falta" in caplog.text                   # declarado: conteúdo, com aviso
     ns = run(t, [{"x": 1}], document_id={"namespace": "outro"})["t"].rows[0]["document_id"]
     assert ns != c1
 
@@ -488,7 +515,7 @@ def test_document_id_strategies_and_fallback(caplog):
 def test_document_id_with_unwrap_and_auto_normalize():
     doc = {"block": [{"id": "A", "items": [{"k": 1}, {"k": 2}]}]}
     res = run([], [doc], unwrap={"paths": ["block"]}, document_id={"column": "doc_id", "from": "block.id"},
-              auto_normalize={"table_prefix": "d"})
+              auto_normalize={"table_prefix": "d", "children": "batch"})
     assert res["d"].spec.keys == ["doc_id"]                          # sem id_path: o UUID é a chave
     child = res["d_block_items"]
     assert child.spec.keys[0] == "doc_id" and child.spec.replace_by == ["doc_id"]

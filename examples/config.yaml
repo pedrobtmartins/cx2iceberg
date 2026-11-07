@@ -11,6 +11,9 @@ target:
 input:
   # Os JSON "value-only" do Catena-X não trazem o semantic id: indique-o por nome de ficheiro
   # (ou --semantic-id na linha de comandos, ou input.envelope se vier embrulhado).
+  # A pasta examples/data tem também ficheiros de outras configurações (pcf_7, pcf_9): ignorá-los é uma
+  # decisão declarada (fica contada no relatório); sem isto, um documento sem submodelo é um erro.
+  on_unmatched: skip
   semantic_id_map:
     "*serial_part*": urn:samm:io.catenax.serial_part:3.0.0#SerialPart
     "*single_level_bom*": urn:samm:io.catenax.single_level_bom_as_built:3.0.0#SingleLevelBomAsBuilt
@@ -103,7 +106,12 @@ submodels:
   # ------------------------------------------------------------------ PCF: tudo automático
   - name: pcf
     match:
-      semantic_id: "urn:samm:io.catenax.pcf:*"
+      semantic_id: "urn:samm:io.catenax.pcf:7.*"   # a versão do modelo abaixo
+    model:
+      # com o schema, as tabelas filhas são TODAS as listas do modelo, haja ou não dados no lote: um documento
+      # cuja lista ficou vazia apaga as linhas antigas dessa lista (sem ele seria preciso children: batch)
+      schema: schemas/pcf_7.0.0-schema.json
+    validate: off              # o data/pcf_demo.json é um exemplo reduzido, sem todos os campos obrigatórios do 7.0.0
     document_id: true          # sem 'from': UUID a partir do conteúdo do documento
     defaults:
       mode: merge
