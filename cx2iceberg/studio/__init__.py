@@ -1,1 +1,1 @@
-"""Interface web local para ver, editar e pré-visualizar configurações."""
+"""Local web interface to view, edit and preview configurations."""

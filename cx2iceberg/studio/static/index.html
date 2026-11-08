@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,80 +10,80 @@
   <header class="bar">
     <span class="wordmark">cx2iceberg studio</span>
     <div class="file-state">
-      <span id="current-file">Escolha um submodelo para começar</span>
-      <span id="dirty" class="dirty" hidden>alterações por guardar</span>
+      <span id="current-file">Choose a submodel to start</span>
+      <span id="dirty" class="dirty" hidden>unsaved changes</span>
     </div>
     <div class="bar-actions">
-      <button id="advanced" class="btn btn-quiet" type="button" disabled>Avançado</button>
-      <button id="save" class="btn btn-primary" type="button" disabled title="Guardar (Ctrl/⌘ + S)">Guardar</button>
+      <button id="advanced" class="btn btn-quiet" type="button" disabled>Advanced</button>
+      <button id="save" class="btn btn-primary" type="button" disabled title="Save (Ctrl/⌘ + S)">Save</button>
     </div>
   </header>
 
-  <nav class="switcher" aria-label="Painéis">
-    <button type="button" data-pane="side" aria-pressed="true">Início</button>
-    <button type="button" data-pane="fields" aria-pressed="false">Campos</button>
-    <button type="button" data-pane="table" aria-pressed="false">Tabela</button>
-    <button type="button" data-pane="result" aria-pressed="false">Resultado</button>
+  <nav class="switcher" aria-label="Panes">
+    <button type="button" data-pane="side" aria-pressed="true">Start</button>
+    <button type="button" data-pane="fields" aria-pressed="false">Fields</button>
+    <button type="button" data-pane="table" aria-pressed="false">Table</button>
+    <button type="button" data-pane="result" aria-pressed="false">Result</button>
   </nav>
 
   <main class="workspace" data-show="side">
-    <aside class="pane pane-side" aria-label="Submodelos e configurações">
+    <aside class="pane pane-side" aria-label="Submodels and configurations">
       <section>
-        <h2>Começar a partir de um submodelo</h2>
-        <p class="hint">Modelos oficiais do Catena-X. O exemplo de cada versão serve de dados de teste.</p>
-        <input id="catalog-search" type="search" placeholder="pcf, serial part, batch…" aria-label="Procurar submodelo">
-        <ul id="catalog" class="catalog"><li class="hint">A carregar o catálogo…</li></ul>
+        <h2>Start from a submodel</h2>
+        <p class="hint">Official Catena-X models. Each version's example serves as test data.</p>
+        <input id="catalog-search" type="search" placeholder="pcf, serial part, batch…" aria-label="Search submodels">
+        <ul id="catalog" class="catalog"><li class="hint">Loading the catalog…</li></ul>
       </section>
       <section>
-        <h2>As suas configurações</h2>
+        <h2>Your configurations</h2>
         <ul id="configs" class="file-list"></ul>
       </section>
       <section id="test-data" hidden>
-        <h2>Dados de teste</h2>
+        <h2>Test data</h2>
         <ul id="samples" class="file-list checks"></ul>
         <details>
-          <summary>Colar um documento JSON</summary>
-          <textarea id="pasted" spellcheck="false" placeholder='{"catenaXId": "urn:uuid:…"}' aria-label="Documento JSON colado"></textarea>
+          <summary>Paste a JSON document</summary>
+          <textarea id="pasted" spellcheck="false" placeholder='{"catenaXId": "urn:uuid:…"}' aria-label="Pasted JSON document"></textarea>
         </details>
       </section>
     </aside>
 
-    <section class="pane pane-fields" aria-label="Campos do modelo">
+    <section class="pane pane-fields" aria-label="Model fields">
       <div class="pane-head">
-        <h2 id="fields-title">Campos</h2>
-        <input id="field-search" type="search" placeholder="Procurar campo" aria-label="Procurar campo">
+        <h2 id="fields-title">Fields</h2>
+        <input id="field-search" type="search" placeholder="Search fields" aria-label="Search fields">
       </div>
-      <p id="fields-hint" class="hint">Clique num campo para o acrescentar à tabela.</p>
+      <p id="fields-hint" class="hint">Click a field to add it to the table.</p>
       <div id="fields" class="fields"></div>
     </section>
 
-    <section class="pane pane-table" aria-label="Tabela">
-      <div id="table-tabs" class="table-tabs" role="tablist" aria-label="Tabelas"></div>
+    <section class="pane pane-table" aria-label="Table">
+      <div id="table-tabs" class="table-tabs" role="tablist" aria-label="Tables"></div>
       <div id="table-body" class="table-body"></div>
     </section>
 
-    <section class="pane pane-result" aria-label="Resultado">
+    <section class="pane pane-result" aria-label="Result">
       <div class="result-head">
-        <p id="summary" class="summary">Sem resultado</p>
+        <p id="summary" class="summary">No result</p>
         <p id="validation" class="validation"></p>
       </div>
       <div id="result-msg" class="result-msg" hidden></div>
       <div id="write-check" class="result-msg" hidden></div>
       <div class="grid-wrap"><table id="grid" class="grid"></table></div>
-      <section id="report" class="report" hidden aria-label="Relatório da carga"></section>
+      <section id="report" class="report" hidden aria-label="Load report"></section>
     </section>
 
-    <section class="pane pane-advanced" id="advanced-pane" hidden aria-label="Avançado">
+    <section class="pane pane-advanced" id="advanced-pane" hidden aria-label="Advanced">
       <div class="pane-head">
-        <h2>Configuração em YAML</h2>
+        <h2>Configuration as YAML</h2>
         <div class="bar-actions">
-          <button id="adv-apply" class="btn btn-primary" type="button">Aplicar alterações</button>
-          <button id="adv-close" class="btn btn-quiet" type="button">Fechar</button>
+          <button id="adv-apply" class="btn btn-primary" type="button">Apply changes</button>
+          <button id="adv-close" class="btn btn-quiet" type="button">Close</button>
         </div>
       </div>
-      <p class="hint">Gerado a partir do construtor. Pode editá-lo à mão para regras que o construtor não mostra; ao aplicar, o construtor passa a usar esta versão.</p>
+      <p class="hint">Generated from the builder. You can edit it by hand for rules the builder does not show; when you apply it, the builder uses this version.</p>
       <p id="adv-error" class="adv-error" hidden></p>
-      <textarea id="adv-text" spellcheck="false" wrap="off" aria-label="Configuração YAML"></textarea>
+      <textarea id="adv-text" spellcheck="false" wrap="off" aria-label="YAML configuration"></textarea>
     </section>
   </main>
 

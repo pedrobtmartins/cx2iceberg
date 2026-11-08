@@ -1,13 +1,13 @@
-"""Condições (`where`, `cases.when`, `check.required_if`, `match.where`): validadas na carga e comparadas com tipo.
+"""Conditions (`where`, `cases.when`, `check.required_if`, `match.where`): validated at load time and compared with their type.
 
-Antes comparava-se texto com texto: `{op: gt, value: "9"}` deixava 10 de fora ('10' < '9'), `gte 0` aceitava
-'n/a' e true, `eq 7` aceitava o texto '7', e datas com fusos diferentes eram ordenadas como texto.
+Before, text was compared with text: `{op: gt, value: "9"}` left 10 out ('10' < '9'), `gte 0` accepted
+'n/a' and true, `eq 7` accepted the text '7', and dates with different time zones were sorted as text.
 
-    números    comparam como números (1 e 1.0 iguais); booleanos não são números
-    datas      texto no formato do schema compara como instante (10:00+02:00 é antes de 09:30Z); se um dos lados
-               for uma data sem hora, compara a data tal como foi escrita (ex.: created >= "2025-01-01")
-    texto      igualdade exacta; ordem (gt/lt...) só entre textos que não sejam números
-    tipos diferentes (número e texto, booleano e texto...) -> ConditionTypeError (com o on_error de quem avalia)
+    numbers    compare as numbers (1 and 1.0 are equal); booleans are not numbers
+    dates      text in the schema's format compares as an instant (10:00+02:00 is before 09:30Z); if one side
+               is a date without a time, the date is compared as it was written (e.g. created >= "2025-01-01")
+    text       exact equality; order (gt/lt...) only between texts that are not numbers
+    different types (number and text, boolean and text...) -> ConditionTypeError (with the evaluator's on_error)
 """
 from __future__ import annotations
 
@@ -25,30 +25,30 @@ NO_VALUE_OPS = {"exists", "missing", "empty", "not_empty"}
 
 
 class ConditionTypeError(PathError):
-    """A condição compara tipos diferentes."""
+    """The condition compares different types."""
 
     reason = "condition_type"
 
 
 def _kind(x: Any) -> str:
     if isinstance(x, bool):
-        return "booleano"
+        return "boolean"
     if isinstance(x, (int, float, Decimal)):
-        return "número"
+        return "number"
     if isinstance(x, str):
-        return "texto"
+        return "text"
     if isinstance(x, list):
-        return "lista"
+        return "list"
     if isinstance(x, dict):
-        return "objecto"
+        return "object"
     if isinstance(x, datetime):
-        return "data/hora"
+        return "date/time"
     return type(x).__name__
 
 
-# --- validação na carga ------------------------------------------------------------
+# --- validation at load time ------------------------------------------------------------
 def validate(cond: Any, where: str) -> None:
-    """Estrutura, operador e tipo do valor; um regex inválido. Lança ValueError (a configuração converte)."""
+    """Structure, operator and type of the value; an invalid regex. Raises ValueError (the configuration converts it)."""
     if cond is None:
         return
     if isinstance(cond, list):
@@ -56,51 +56,51 @@ def validate(cond: Any, where: str) -> None:
             validate(c, f"{where}[{i}]")
         return
     if not isinstance(cond, dict):
-        raise ValueError(f"{where}: condição inválida {cond!r}")
+        raise ValueError(f"{where}: invalid condition {cond!r}")
     for key in ("all", "any"):
         if key in cond:
             if set(cond) != {key} or not isinstance(cond[key], list):
-                raise ValueError(f"{where}: use {{{key}: [condição, ...]}} sozinho")
+                raise ValueError(f"{where}: use {{{key}: [condition, ...]}} on its own")
             for i, c in enumerate(cond[key]):
                 validate(c, f"{where}.{key}[{i}]")
             return
     if "not" in cond:
         if set(cond) != {"not"}:
-            raise ValueError(f"{where}: use {{not: condição}} sozinho")
+            raise ValueError(f"{where}: use {{not: condition}} on its own")
         validate(cond["not"], f"{where}.not")
         return
     unknown = set(cond) - {"path", "op", "value"}
     if unknown:
-        raise ValueError(f"{where}: chave(s) desconhecida(s) {sorted(unknown)} (use path, op, value)")
+        raise ValueError(f"{where}: unknown key(s) {sorted(unknown)} (use path, op, value)")
     if not isinstance(cond.get("path"), str):
-        raise ValueError(f"{where}: falta 'path'")
+        raise ValueError(f"{where}: 'path' is missing")
     op = cond.get("op", "eq" if "value" in cond else "exists")
     if op not in OPS:
-        raise ValueError(f"{where}: operador '{op}' desconhecido; use um de {sorted(OPS)}")
+        raise ValueError(f"{where}: unknown operator '{op}'; use one of {sorted(OPS)}")
     value = cond.get("value")
     if op in NO_VALUE_OPS:
         if "value" in cond:
-            raise ValueError(f"{where}: '{op}' não leva value")
+            raise ValueError(f"{where}: '{op}' takes no value")
     elif op in ("in", "not_in"):
         if not isinstance(value, list) or not value or any(isinstance(x, (list, dict)) for x in value):
-            raise ValueError(f"{where}: '{op}' precisa de uma lista de valores simples")
+            raise ValueError(f"{where}: '{op}' needs a list of simple values")
     elif op == "regex":
         if not isinstance(value, str):
-            raise ValueError(f"{where}: regex precisa de um texto")
+            raise ValueError(f"{where}: regex needs a text")
         try:
             re.compile(value)
         except re.error as e:
-            raise ValueError(f"{where}: regex inválido: {e}") from None
+            raise ValueError(f"{where}: invalid regex: {e}") from None
     elif op in ("gt", "gte", "lt", "lte"):
         if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-            raise ValueError(f"{where}: '{op}' precisa de um número ou de um texto (ex.: data)")
+            raise ValueError(f"{where}: '{op}' needs a number or a text (e.g. a date)")
     elif "value" not in cond or isinstance(value, (list, dict)):
-        raise ValueError(f"{where}: '{op}' precisa de um value simples (use null para nulo)")
+        raise ValueError(f"{where}: '{op}' needs a simple value (use null for null)")
 
 
-# --- avaliação ----------------------------------------------------------------------
+# --- evaluation ----------------------------------------------------------------------
 def _date_like(s: str):
-    """Texto no formato do schema -> (datetime, é_data_sem_hora, fim_do_dia); None se não for data."""
+    """Text in the schema's format -> (datetime, is_date_without_time, end_of_day); None if it is not a date."""
     try:
         dt, origin, end = dates.parse_text(s)
     except ValueError:
@@ -116,10 +116,10 @@ def _looks_number(s: str) -> bool:
 def _same(a: Any, b: Any, text: str) -> bool:
     ka, kb = _kind(a), _kind(b)
     if ka != kb:
-        raise ConditionTypeError(f"{text}: compara {ka} {a!r} com {kb} {b!r}")
-    if ka == "número":
+        raise ConditionTypeError(f"{text}: compares {ka} {a!r} with {kb} {b!r}")
+    if ka == "number":
         return to_decimal(a) == to_decimal(b)
-    if ka == "texto":
+    if ka == "text":
         da, db = _date_like(a), _date_like(b)
         if da and db:
             return _order_dates(da, db, a, b, text) == 0
@@ -128,28 +128,28 @@ def _same(a: Any, b: Any, text: str) -> bool:
 
 def _order_dates(da, db, a, b, text) -> int:
     (x, x_date, x_end), (y, y_date, y_end) = da, db
-    if x_date or y_date:                      # uma data sem hora: compara-se a data tal como foi escrita
+    if x_date or y_date:                      # a date without a time: the date is compared as it was written
         if x_end or y_end:
-            raise ConditionTypeError(f"{text}: 24:00:00 comparado com uma data é ambíguo ({a!r}, {b!r})")
+            raise ConditionTypeError(f"{text}: 24:00:00 compared with a date is ambiguous ({a!r}, {b!r})")
         x, y = x.date(), y.date()
     elif (x.tzinfo is None) != (y.tzinfo is None):
-        raise ConditionTypeError(f"{text}: compara uma data/hora com fuso e outra sem fuso ({a!r}, {b!r})")
+        raise ConditionTypeError(f"{text}: compares a date/time with a time zone and another without ({a!r}, {b!r})")
     return (x > y) - (x < y)
 
 
 def _order(a: Any, b: Any, text: str) -> int:
     ka, kb = _kind(a), _kind(b)
-    if ka != kb or ka not in ("número", "texto"):
-        raise ConditionTypeError(f"{text}: não se ordena {ka} {a!r} com {kb} {b!r}")
-    if ka == "número":
+    if ka != kb or ka not in ("number", "text"):
+        raise ConditionTypeError(f"{text}: cannot order {ka} {a!r} with {kb} {b!r}")
+    if ka == "number":
         x, y = to_decimal(a), to_decimal(b)
         return (x > y) - (x < y)
     da, db = _date_like(a), _date_like(b)
     if da and db:
         return _order_dates(da, db, a, b, text)
     if _looks_number(a) or _looks_number(b):
-        raise ConditionTypeError(f"{text}: número em texto ({a!r} / {b!r}) ordenado como texto daria '9' > '10'; "
-                                 f"use to_number ou um valor numérico")
+        raise ConditionTypeError(f"{text}: number as text ({a!r} / {b!r}) sorted as text would give '9' > '10'; "
+                                 f"use to_number or a numeric value")
     return (a > b) - (a < b)
 
 
@@ -169,7 +169,7 @@ def evaluate(cond: Any, ctx: Context) -> bool:
     if isinstance(v, Projection):
         v = list(v)
     exp = cond.get("value")
-    text = f"condição {cond['path']} {op} {exp!r}" if op not in NO_VALUE_OPS else f"condição {cond['path']} {op}"
+    text = f"condition {cond['path']} {op} {exp!r}" if op not in NO_VALUE_OPS else f"condition {cond['path']} {op}"
     if op == "exists":
         return v is not MISSING and v is not None
     if op == "missing":
@@ -180,29 +180,29 @@ def evaluate(cond: Any, ctx: Context) -> bool:
         return not (v is MISSING or v is None or v in ("", [], {}))
     if v is MISSING or v is None:
         return op in ("ne", "not_in") if exp is not None else op == "eq"
-    if exp is None:                           # eq/ne null com um valor presente
+    if exp is None:                           # eq/ne null with a value present
         return op == "ne"
     if op in ("eq", "ne"):
         return _same(v, exp, text) == (op == "eq")
     if op in ("in", "not_in"):
         candidates = [e for e in exp if _kind(e) == _kind(v)]
         if not candidates:
-            raise ConditionTypeError(f"{text}: {_kind(v)} {v!r} comparado com uma lista de {_kind(exp[0])}")
+            raise ConditionTypeError(f"{text}: {_kind(v)} {v!r} compared with a list of {_kind(exp[0])}")
         return any(_same(v, e, text) for e in candidates) == (op == "in")
     if op == "regex":
         if not isinstance(v, str):
-            raise ConditionTypeError(f"{text}: regex sobre {_kind(v)} {v!r} (só se aplica a texto)")
+            raise ConditionTypeError(f"{text}: regex on {_kind(v)} {v!r} (only applies to text)")
         return re.search(exp, v) is not None
     if op == "contains":
         if isinstance(v, list):
             same = [x for x in v if x is not None and _kind(x) == _kind(exp)]
             if v and not same:
-                raise ConditionTypeError(f"{text}: a lista não tem valores do tipo {_kind(exp)}")
+                raise ConditionTypeError(f"{text}: the list has no values of type {_kind(exp)}")
             return any(_same(x, exp, text) for x in same)
         if isinstance(v, str):
             if not isinstance(exp, str):
-                raise ConditionTypeError(f"{text}: procura {_kind(exp)} dentro de texto")
+                raise ConditionTypeError(f"{text}: looks for {_kind(exp)} inside text")
             return exp in v
-        raise ConditionTypeError(f"{text}: contains sobre {_kind(v)} (use uma lista ou texto)")
+        raise ConditionTypeError(f"{text}: contains on {_kind(v)} (use a list or text)")
     c = _order(v, exp, text)
     return {"gt": c > 0, "gte": c >= 0, "lt": c < 0, "lte": c <= 0}[op]

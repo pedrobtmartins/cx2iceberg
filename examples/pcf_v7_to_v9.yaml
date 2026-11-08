@@ -1,5 +1,5 @@
-# Migração PCF 7.0.0 -> colunas PCF 9.0.0, com PCF 9.0.0 a entrar na mesma tabela.
-# Um exemplo de cada tipo de transformação de um mapping de versões (os números [n] repetem-se nos dois submodelos).
+# Migration PCF 7.0.0 -> PCF 9.0.0 columns, with PCF 9.0.0 going into the same table.
+# One example of each kind of transformation a version mapping needs (the numbers [n] repeat in both submodels).
 #
 #   cx2iceberg run -c examples/pcf_v7_to_v9.yaml examples/data/pcf_7.json examples/data/pcf_9.json --dry-run
 
@@ -17,15 +17,15 @@ defaults:
 
 submodels:
 
-  # ------------------------------------------------------------------ PCF 7.0.0 (migrado)
+  # ------------------------------------------------------------------ PCF 7.0.0 (migrated)
   - name: pcf_v7
-    match:                                        # [15] várias versões para a mesma tabela:
-      any:                                        #      reconhece a versão pelo semantic id ou pelo próprio payload
+    match:                                        # [15] several versions for the same table:
+      any:                                        #      recognises the version by the semantic id or by the payload itself
         - {semantic_id: "urn:samm:io.catenax.pcf:7.*"}
         - {where: {path: specVersion, op: regex, value: "version:7\\."}}
-    document_id:                                  # UUID em todas as tabelas; o mesmo PCF (id + version) dá o
-      column: pcf_uuid                            # mesmo UUID venha em v7 ou em v9
-      from: [id, {path: version, type: int}]      # número: com tipo, 0, "0" e 0.0 dão o mesmo UUID
+    document_id:                                  # UUID in every table; the same PCF (id + version) gives the
+      column: pcf_uuid                            # same UUID whether it comes as v7 or v9
+      from: [id, {path: version, type: int}]      # a number: with a type, 0, "0" and 0.0 give the same UUID
     tables:
       - name: pcf
         columns:
@@ -33,77 +33,77 @@ submodels:
           version: version ::int
           source_model: {const: "7.0.0"}
 
-          # [1] renomear campo
+          # [1] rename a field
           declared_unit_of_measurement: pcf.declaredUnit
           declared_unit_amount: pcf.unitaryProductAmount ::double
 
-          # [2] mudar de nível: no v7 está em pcf.dataQualityRating, no v9 em dataSourcesAndQuality
+          # [2] move to another level: in v7 it is in pcf.dataQualityRating, in v9 in dataSourcesAndQuality
           technological_dqr: pcf.dataQualityRating.technologicalDQR ::double
 
-          # [3] nomes alternativos na origem (o primeiro que existir)
+          # [3] alternative names in the source (the first one that exists)
           fossil_carbon_content: {paths: [pcf.fossilCarbonContent, pcf.extWBCSD_fossilCarbonContent], type: double}
           status: {paths: [status, extWBCSD_pfStatus]}
 
-          # [4] campo que não existe na origem -> vazio, com o tipo da coluna v9
+          # [4] a field that does not exist in the source -> empty, with the v9 column's type
           ccs_technological_co2_capture_included: {const: null, type: boolean}
 
-          # [5] drop: campos v7 como pcf.dataQualityRating.reliabilityDQR simplesmente não são mapeados
+          # [5] drop: v7 fields such as pcf.dataQualityRating.reliabilityDQR are simply not mapped
 
-          # [6] lista de objectos -> lista de valores
+          # [6] list of objects -> list of values
           cross_sectoral_standards: "pcf.crossSectoralStandardsUsed[*].crossSectoralStandard ::array<string>"
-          # [7] listas aninhadas achatadas numa só lista
+          # [7] nested lists flattened into a single list
           product_or_sector_specific_rules: "pcf.productOrSectorSpecificRules[*].productOrSectorSpecificRules[*].ruleName ::array<string>"
 
-          # [8] valor simples -> lista
+          # [8] simple value -> list
           product_classifications: {path: extWBCSD_productCodeCpc, transform: {prefix: "urn:cpc:"}, type: "array<string>"}
 
-          # [9] um campo origem -> dois destinos, conforme o sinal ("0 if v7 value is neg" / "0 if >= 0")
+          # [9] one source field -> two targets, depending on the sign ("0 if v7 value is neg" / "0 if >= 0")
           land_management_biogenic_co2_emissions:
             cases:
               - when: {path: pcf.extTFS_luGhgEmissions, op: gte, value: 0}
                 path: pcf.extTFS_luGhgEmissions
               - else: 0
             type: double
-          land_management_biogenic_co2_removals:      # o mesmo com clamp, mais curto
+          land_management_biogenic_co2_removals:      # the same with clamp, shorter
             path: pcf.extTFS_luGhgEmissions
             transform: {clamp: {max: 0}}
             type: double
-          # mudança de convenção de sinal: withdrawal (v7) -> uptake (v9)
+          # change of sign convention: withdrawal (v7) -> uptake (v9)
           biogenic_co2_uptake: {path: pcf.biogenicCarbonWithdrawal, transform: {multiply: -1}, type: double}
 
-          # [10] formato ("should have format urn:<BPN>") — só avisa, não pára a carga
+          # [10] format ("should have format urn:<BPN>") — only warns, does not stop the load
           company_ids:
             path: companyIds
             type: array<string>
             check: {regex: "^urn:.*BPNL[0-9A-Z]{12}$", on_fail: warn}
 
-          # [11] intervalo ("decimal (Range 0-100)")
+          # [11] range ("decimal (Range 0-100)")
           primary_data_share:
             path: pcf.primaryDataShare
             type: double
             check: {min: 0, max: 100, on_fail: "null"}
 
-          # [12] lista de valores fechada, com tradução de valores antigos
+          # [12] closed list of values, with old values translated
           allocation_waste_incineration:
             path: pcf.extTFS_allocationWasteIncineration
             transform: {map: {cut-off: cut-off, reverse cut-off: cut-off, _ignore_case: true}}
             check: {in: [polluter pays principle, cut-off, reverse cut-off], ignore_case: true}
 
-          # [13] obrigatório só em certas condições. O PCF 7.0.0 não tem mass balancing (esse campo só existe no 9.0.0);
-          #      o schema 7.0.0 diz "Mandatory starting 2025" para carbonContentBiogenic -> obrigatório nos PCF criados desde 2025
+          # [13] required only under certain conditions. PCF 7.0.0 has no mass balancing (that field only exists in 9.0.0);
+          #      the 7.0.0 schema says "Mandatory starting 2025" for carbonContentBiogenic -> required for PCFs created since 2025
           biogenic_carbon_content:
             path: pcf.carbonContentBiogenic
             type: double
             check: {required_if: {path: created, op: gte, value: "2025-01-01"}}
 
-          # [14] valor por omissão
+          # [14] default value
           allocation_rules_description:
             paths: [pcf.allocationRulesDescription, pcf.extWBCSD_allocationRulesDescription]
             default: In accordance with Catena-X PCF Rulebook
 
           created: created ::timestamp
 
-  # ------------------------------------------------------------------ PCF 9.0.0 (directo)
+  # ------------------------------------------------------------------ PCF 9.0.0 (direct)
   - name: pcf_v9
     match:
       any:
@@ -111,9 +111,9 @@ submodels:
         - {where: {path: "scopeOfPcfForm[0].specVersion", op: regex, value: "version:9\\."}}
     document_id:
       column: pcf_uuid
-      from: [pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id,      # caminhos depois do unwrap
+      from: [pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id,      # paths after the unwrap
              {path: pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.version, type: int}]
-    unwrap:                                       # [2] blocos de 1 elemento -> objectos
+    unwrap:                                       # [2] 1-element blocks -> objects
       all: true
       except: [attestationOfConformance, pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.precedingPfIds]
     tables:

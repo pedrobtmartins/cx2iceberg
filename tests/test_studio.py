@@ -44,7 +44,7 @@ def root(tmp_path):
 
 @pytest.fixture
 def pcf_root(tmp_path):
-    """Pasta com o PCF 9.0.0 como se tivesse vindo do catálogo (sem rede)."""
+    """Folder with PCF 9.0.0 as if it had come from the catalog (no network)."""
     d = tmp_path / "models" / "io.catenax.pcf" / "9.0.0"
     d.mkdir(parents=True)
     (d / "Pcf-schema.json").write_text((EX / "schemas" / "pcf_9.0.0-schema.json").read_text())
@@ -59,10 +59,10 @@ PCF_INFO = {"model": "io.catenax.pcf", "version": "9.0.0", "aspect": "Pcf",
 def test_files_load_and_safety(root):
     s = Studio(root)
     f = s.files()
-    assert [c["path"] for c in f["configs"]] == ["cfg/a.yaml"]          # só configurações, sem pastas escondidas
-    assert [d["path"] for d in f["samples"]] == ["data/d.json"]          # sem *-schema.json
+    assert [c["path"] for c in f["configs"]] == ["cfg/a.yaml"]          # configurations only, no hidden folders
+    assert [d["path"] for d in f["samples"]] == ["data/d.json"]          # no *-schema.json
     cfg = s.load("cfg/a.yaml")["config"]
-    assert cfg["submodels"][0]["tables"][0]["columns"]["n"] == {"path": "n", "type": "int"}   # forma compacta expandida
+    assert cfg["submodels"][0]["tables"][0]["columns"]["n"] == {"path": "n", "type": "int"}   # compact form expanded
     with pytest.raises(ApiError):
         s.load("../outside.yaml")
 
@@ -72,7 +72,7 @@ def test_render_roundtrip():
     text = render(cfg)
     again = normalize(yaml.safe_load(text))
     assert again == cfg
-    assert "id: id\n" in text                                            # coluna só com caminho fica compacta
+    assert "id: id\n" in text                                            # a column with only a path stays compact
 
 
 def test_preview_with_config_dict(root):
@@ -84,18 +84,18 @@ def test_preview_with_config_dict(root):
     cfg["submodels"][0]["tables"][0]["mode"] = "nope"
     bad = s.preview({"config": cfg, "samples": []})
     assert bad["stage"] == "config" and "nope" in bad["error"]
-    # um documento rejeitado já não transforma a pré-visualização num erro: aparece no relatório, com o motivo,
-    # e as linhas dos outros documentos continuam visíveis (antes: só a mensagem de erro)
+    # a rejected document no longer turns the preview into an error: it appears in the report, with the reason,
+    # and the other documents' rows are still visible (before: only the error message)
     pasted = '[{"id": "Z", "n": 1.5}, {"id": "Y", "n": 2}]'
     part = s.preview({"config": normalize(yaml.safe_load(CFG)), "samples": [], "pasted": pasted})
     assert part["ok"] and part["report"]["status"] == "partial" and part["summary"]["rows"] == 1
     err = next(g for g in part["report"]["groups"] if g["kind"] == "error")
-    assert err["column"] == "n" and err["reason_label"] == "valor inválido" and "não é inteiro" in err["examples"][0]["message"]
-    assert part["report"]["rejected_documents"][0]["file"] == "(colado)"
+    assert err["column"] == "n" and err["reason_label"] == "invalid value" and "is not an integer" in err["examples"][0]["message"]
+    assert part["report"]["rejected_documents"][0]["file"] == "(pasted)"
 
 
 def test_preview_shows_values_as_they_are_written(root):
-    # o browser (números do JavaScript) mostrava 9007199254740993 como ...992 e um float 1.1 como 1.100000023841858
+    # the browser (JavaScript numbers) showed 9007199254740993 as ...992 and a float 1.1 as 1.100000023841858
     cfg = {"submodels": [{"name": "s", "tables": [{"name": "t", "columns": {
         "big": "big ::bigint", "f": "f ::float", "d": "d ::decimal(5,2)", "xs": "xs ::array<bigint>",
         "fs": "fs ::array<float>"}}]}]}
@@ -109,34 +109,34 @@ def test_preview_shows_values_as_they_are_written(root):
 def test_preview_runs_the_write_precheck(root):
     cfg = {"submodels": [{"name": "s", "tables": [{"name": "t", "partition_by": ["contry"], "columns": {"country": "c"}}]}]}
     r = Studio(root).preview({"config": cfg, "samples": [], "pasted": '{"c": "PT"}'})
-    assert r["ok"] and "partition_by usa ['contry']" in r["write_check"][0]
+    assert r["ok"] and "partition_by uses ['contry']" in r["write_check"][0]
 
 
 def test_save_conflicts(root):
     s = Studio(root)
     f = s.load("cfg/a.yaml")
     r = s.save("cfg/a.yaml", CFG + "# x\n", f["version"])
-    with pytest.raises(ApiError, match="alterado fora"):
-        s.save("cfg/a.yaml", CFG, f["version"])                        # versão antiga
-    with pytest.raises(ApiError, match="Já existe"):
-        s.save("cfg/a.yaml", CFG, None)                                # ficheiro novo com nome ocupado
+    with pytest.raises(ApiError, match="changed outside"):
+        s.save("cfg/a.yaml", CFG, f["version"])                        # old version
+    with pytest.raises(ApiError, match="already exists"):
+        s.save("cfg/a.yaml", CFG, None)                                # a new file with a name already taken
     s.save("cfg/a.yaml", CFG, r["version"])
     with pytest.raises(ApiError, match=".yaml"):
         s.save("data/d.json", "{}", None)
 
 
 def test_external_edit_with_the_same_mtime_is_a_conflict(root):
-    # antes a versão era o mtime: com a mesma marca de tempo (FS com resolução de 1-2 s, Docker/WSL, cp -p) a
-    # edição feita fora era apagada pelo studio sem aviso; o teste anterior dependia da resolução do relógio
+    # before, the version was the mtime: with the same timestamp (FS with 1-2 s resolution, Docker/WSL, cp -p) an
+    # edit made outside was overwritten by the studio without a warning; the previous test depended on the clock's resolution
     s = Studio(root)
     f = s.load("cfg/a.yaml")
     p = root / "cfg" / "a.yaml"
     st = p.stat()
-    p.write_text(CFG + "# editado fora\n")
+    p.write_text(CFG + "# edited outside\n")
     os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
-    with pytest.raises(ApiError, match="alterado fora"):
-        s.save("cfg/a.yaml", CFG + "# do studio\n", f["version"])
-    assert p.read_text().endswith("# editado fora\n")
+    with pytest.raises(ApiError, match="changed outside"):
+        s.save("cfg/a.yaml", CFG + "# from the studio\n", f["version"])
+    assert p.read_text().endswith("# edited outside\n")
 
 
 def test_new_config_from_model_and_validation(pcf_root):
@@ -145,17 +145,17 @@ def test_new_config_from_model_and_validation(pcf_root):
     assert sub["model"]["schema"] == "../models/io.catenax.pcf/9.0.0/Pcf-schema.json"
     assert sub["validate"] == "warn" and sub["match"] == {"semantic_id": "urn:samm:io.catenax.pcf:9.*"}
     assert sub["document_id"]["from"] == ["pcfAssessmentAndMethodology.pcfAssessmentInformation.idAndVersion.id"]
-    assert "attestationOfConformance" in sub["unwrap"]["paths"]       # lista com 1 elemento no exemplo
+    assert "attestationOfConformance" in sub["unwrap"]["paths"]       # a list with 1 element in the example
     s = Studio(pcf_root)
     ok = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [PCF_INFO["example"]]})
-    assert ok["ok"] and ok["validation"] == [] and ok["summary"]["rows"] == 1   # o exemplo usa o URN do schema
+    assert ok["ok"] and ok["validation"] == [] and ok["summary"]["rows"] == 1   # the example uses the schema's URN
     doc = json.loads((pcf_root / PCF_INFO["example"]).read_text())
-    doc["carbonContent"][0]["fossilCarbonContent"] = "muito"
+    doc["carbonContent"][0]["fossilCarbonContent"] = "lots"
     del doc["general"]
     bad = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [], "pasted": json.dumps(doc)})
     errs = {e["path"]: e["message"] for e in bad["validation"][0]["errors"]}
-    assert errs[""] == "falta o campo obrigatório 'general'"
-    assert errs["carbonContent[0].fossilCarbonContent"] == '"muito" devia ser número'
+    assert errs[""] == "required field 'general' is missing"
+    assert errs["carbonContent[0].fossilCarbonContent"] == '"lots" should be number'
     sub["validate"] = "skip"
     skipped = s.preview({"config": cfg, "path": "configs/pcf_v9.yaml", "samples": [], "pasted": json.dumps(doc)})
     assert skipped["summary"]["rows"] == 0
@@ -167,12 +167,12 @@ def test_validate_fail_and_config_errors(pcf_root):
     cfg["submodels"][0]["validate"] = "fail"
     p = pcf_root / "configs" / "pcf_v9.yaml"
     p.write_text(render(cfg))
-    loaded = load(p)                                                   # caminhos relativos à configuração
+    loaded = load(p)                                                   # paths relative to the configuration
     from cx2iceberg.engine import TransformError
-    with pytest.raises(TransformError, match="não cumpre o schema"):
+    with pytest.raises(TransformError, match="does not match the schema"):
         Engine(loaded).run([Document({"x": 1}, "x.json", "urn:samm:io.catenax.pcf:9.0.0#Pcf")])
     from cx2iceberg import ConfigError, from_dict
-    with pytest.raises(ConfigError, match="precisa de model.schema"):
+    with pytest.raises(ConfigError, match="needs model.schema"):
         from_dict({"submodels": [{"validate": "warn", "tables": [{"name": "t", "auto": True}]}]})
 
 
@@ -192,7 +192,7 @@ def test_fields_tree(pcf_root):
     assert fossil["label"] == "Fossil GHG emissions" and fossil["type"] == "double" and fossil["example"] == 0.5
     assert flat["companyAndProductInformation.companyInformation.companyIds"]["kind"] == "values"
     assert flat["attestationOfConformance"]["single"] is True
-    cfg["submodels"][0]["unwrap"]["paths"].remove("attestationOfConformance")   # passa a lista com vários
+    cfg["submodels"][0]["unwrap"]["paths"].remove("attestationOfConformance")   # it becomes a list with several
     tree2 = s.fields(cfg, 0, "configs/pcf_v9.yaml")["tree"]
     att = next(n for n in tree2 if n["key"] == "attestationOfConformance")
     assert att["single"] is False and att["children"][0]["path"].startswith("attestationOfConformance[*].")
@@ -221,7 +221,7 @@ def test_catalog_with_local_clone(tmp_path):
     assert s.catalog_status("io.catenax.pcf", ["9.0.0"])["status"] == {"9.0.0": "release"}
     n = s.new("io.catenax.pcf", "9.0.0", None)
     assert n["path"] == "configs/pcf_v9.yaml" and (tmp_path / "work" / "models/io.catenax.pcf/9.0.0/Pcf.json").exists()
-    with pytest.raises(ApiError, match="desconhecido"):
+    with pytest.raises(ApiError, match="Unknown submodel"):
         s.new("io.catenax.pcf", "../../etc", None)
 
 
@@ -242,8 +242,8 @@ def test_http_guard(root):
         put = urllib.request.Request(base + "/api/file", method="PUT", headers={"Content-Type": "application/json"},
                                      data=json.dumps({"path": "cfg/new.yaml", "config": normalize(yaml.safe_load(CFG))}).encode())
         assert json.load(urllib.request.urlopen(put))["path"] == "cfg/new.yaml"
-        assert (root / "cfg" / "new.yaml").read_text().startswith("# Gerado pelo cx2iceberg studio")
-        # o que a interface faz: abrir (versão), gravar com essa versão, e uma versão antiga dá 409
+        assert (root / "cfg" / "new.yaml").read_text().startswith("# Generated by cx2iceberg studio")
+        # what the interface does: open (version), save with that version, and an old version gives 409
         def call(method, route, body):
             r = urllib.request.Request(base + route, method=method, headers={"Content-Type": "application/json"},
                                        data=json.dumps(body).encode())
@@ -252,7 +252,7 @@ def test_http_guard(root):
         saved = call("PUT", "/api/file", {"path": "cfg/new.yaml", "config": opened["config"], "version": opened["version"]})
         assert saved["version"] and "mtime" not in saved
         with pytest.raises(urllib.error.HTTPError) as e:
-            call("PUT", "/api/file", {"path": "cfg/new.yaml", "text": CFG + "# velho\n", "version": "0" * 64})
+            call("PUT", "/api/file", {"path": "cfg/new.yaml", "text": CFG + "# old\n", "version": "0" * 64})
         assert e.value.code == 409
     finally:
         httpd.shutdown()

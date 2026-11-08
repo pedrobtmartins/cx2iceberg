@@ -1,17 +1,17 @@
-"""Relatório da carga: tudo o que não chegou às tabelas tal como veio no JSON.
+"""Load report: everything that did not reach the tables exactly as it came in the JSON.
 
-Cada evento diz tabela, coluna, ficheiro, documento (posição no ficheiro), linha (posição no explode),
-chaves, valor de origem, o que aconteceu (`action`) e porquê (`reason`). Há três tipos:
+Each event gives the table, column, file, document (position in the file), row (position in the explode),
+keys, source value, what happened (`action`) and why (`reason`). There are three kinds:
 
-    error      o documento é rejeitado: nenhuma linha dele é escrita, em nenhuma tabela
-    declared   perda declarada na configuração (on_error: null, skip_row, default, where, ...): contada
-    warning    sem perda declarada, mas a rever (check com on_fail: warn, duplicados removidos, ...)
+    error      the document is rejected: none of its rows is written, in any table
+    declared   a loss declared in the configuration (on_error: null, skip_row, default, where, ...): counted
+    warning    no declared loss, but worth reviewing (check with on_fail: warn, duplicates removed, ...)
 
-Memória limitada, seja qual for o tamanho da entrada:
-    * contagens exactas por (tipo, motivo, acção, tabela, coluna): o nº de grupos depende da configuração;
-    * só os primeiros `samples` eventos de cada grupo ficam em memória;
-    * a lista completa pode ir para um ficheiro JSON Lines (`details_path`), escrito evento a evento;
-    * ao fim de `max_errors` erros a carga é interrompida (e não se escreve nada).
+Bounded memory, whatever the size of the input:
+    * exact counts per (kind, reason, action, table, column): the number of groups depends on the configuration;
+    * only the first `samples` events of each group are kept in memory;
+    * the full list can go to a JSON Lines file (`details_path`), written event by event;
+    * after `max_errors` errors the load stops (and nothing is written).
 """
 from __future__ import annotations
 
@@ -25,103 +25,103 @@ VALUE_MAX = 200
 NO_VALUE = object()
 
 KIND_TITLES = {
-    "error": "Erros (documentos rejeitados)",
-    "declared": "Perdas declaradas na configuração",
-    "warning": "Avisos",
+    "error": "Errors (rejected documents)",
+    "declared": "Losses declared in the configuration",
+    "warning": "Warnings",
 }
 REASONS = {
-    "invalid_value": "valor inválido",
-    "required_empty": "obrigatório vazio",
-    "check": "check falhou",
-    "unreadable": "não foi possível ler o documento",
-    "invalid_document": "documento inválido",
-    "empty_file": "ficheiro sem documentos",
-    "number_as_text": "número em texto",
-    "empty_text": "texto vazio",
-    "path_shape": "caminho com a forma errada",
-    "filter_type": "filtro compara tipos diferentes",
-    "missing_elements": "elementos sem o campo",
-    "rounded": "arredondado (rounding declarado)",
-    "clamped": "limitado pelo clamp",
-    "naive_timestamp": "data/hora sem fuso",
-    "timestamp_precision": "fracção abaixo do microssegundo",
-    "unit_fallback": "quantidade sem unidade",
-    "nulls_skipped": "nulos ignorados (nulls: skip)",
-    "no_match": "regex sem correspondência",
-    "untyped_value": "valor que mudaria numa coluna sem tipo",
-    "untyped_all_null": "coluna sem tipo só com nulos",
-    "column_added": "coluna nova na tabela",
-    "column_widened": "tipo da coluna alargado na tabela",
-    "missing_columns": "colunas da tabela fora da configuração",
-    "template_missing": "template incompleto",
-    "auto_collision": "colisão de nomes no modo auto",
-    "condition_type": "condição compara tipos diferentes",
-    "schema": "não cumpre o schema",
-    "unwrap_multiple": "lista com vários elementos no unwrap",
-    "no_submodel": "nenhum submodelo corresponde",
-    "document_id_key_missing": "campo da chave do document_id em falta",
-    "where_false": "excluída pelo where",
-    "missing_value": "valor em falta",
-    "duplicate_key": "chave repetida",
-    "null_key": "chave nula",
-    "outside_model": "campo fora do modelo (auto_naming: leaf)",
-    "children_from_batch": "tabelas filhas só das listas do lote",
+    "invalid_value": "invalid value",
+    "required_empty": "required value empty",
+    "check": "check failed",
+    "unreadable": "document could not be read",
+    "invalid_document": "invalid document",
+    "empty_file": "file without documents",
+    "number_as_text": "number as text",
+    "empty_text": "empty text",
+    "path_shape": "path with the wrong shape",
+    "filter_type": "filter compares different types",
+    "missing_elements": "elements without the field",
+    "rounded": "rounded (rounding declared)",
+    "clamped": "limited by clamp",
+    "naive_timestamp": "date/time without time zone",
+    "timestamp_precision": "fraction below the microsecond",
+    "unit_fallback": "quantity without unit",
+    "nulls_skipped": "nulls skipped (nulls: skip)",
+    "no_match": "regex without a match",
+    "untyped_value": "value that would change in an untyped column",
+    "untyped_all_null": "untyped column with only nulls",
+    "column_added": "new column in the table",
+    "column_widened": "column type widened in the table",
+    "missing_columns": "table columns not in the configuration",
+    "template_missing": "incomplete template",
+    "auto_collision": "name collision in auto mode",
+    "condition_type": "condition compares different types",
+    "schema": "does not match the schema",
+    "unwrap_multiple": "list with several elements in unwrap",
+    "no_submodel": "no submodel matches",
+    "document_id_key_missing": "document_id key field missing",
+    "where_false": "excluded by where",
+    "missing_value": "missing value",
+    "duplicate_key": "duplicate key",
+    "null_key": "null key",
+    "outside_model": "field outside the model (auto_naming: leaf)",
+    "children_from_batch": "child tables only from the batch's lists",
 }
 ACTIONS = {
-    "document_rejected": "documento rejeitado",
-    "nulled": "valor anulado",
-    "row_skipped": "linha ignorada",
-    "default_applied": "default aplicado",
-    "kept": "mantido",
-    "ignored": "documento ignorado",
-    "first_element": "usado o 1.º elemento",
-    "row_not_generated": "linha não gerada",
-    "row_removed": "linha removida",
-    "content_hash": "UUID a partir do conteúdo",
-    "element_skipped": "elementos ignorados",
-    "element_nulled": "um nulo por elemento",
-    "rounded": "valor arredondado",
-    "clamped": "valor limitado",
-    "assumed_utc": "lida como UTC",
-    "truncated": "cortada ao microssegundo",
-    "assumed_unit": "unidade do from",
-    "skipped": "ignorados",
-    "column_omitted": "coluna não criada",
-    "schema_change": "esquema da tabela alterado",
-    "row_replaced": "substituída pela do documento seguinte",
-    "auto_skipped": "campo auto não incluído",
-    "rendered_empty": "partes em falta vazias",
-    "assumed_zone": "lida no fuso declarado",
-    "assumed_midnight": "lida como meia-noite",
-    "full_name": "coluna com o nome completo",
-    "not_deleted": "linhas antigas não apagadas",
+    "document_rejected": "document rejected",
+    "nulled": "value set to null",
+    "row_skipped": "row skipped",
+    "default_applied": "default applied",
+    "kept": "kept",
+    "ignored": "document ignored",
+    "first_element": "first element used",
+    "row_not_generated": "row not generated",
+    "row_removed": "row removed",
+    "content_hash": "UUID from the content",
+    "element_skipped": "elements skipped",
+    "element_nulled": "one null per element",
+    "rounded": "value rounded",
+    "clamped": "value limited",
+    "assumed_utc": "read as UTC",
+    "truncated": "truncated to the microsecond",
+    "assumed_unit": "unit from `from`",
+    "skipped": "skipped",
+    "column_omitted": "column not created",
+    "schema_change": "table schema changed",
+    "row_replaced": "replaced by the next document's row",
+    "auto_skipped": "auto field not included",
+    "rendered_empty": "missing parts left empty",
+    "assumed_zone": "read in the declared time zone",
+    "assumed_midnight": "read as midnight",
+    "full_name": "column with the full name",
+    "not_deleted": "old rows not deleted",
 }
 WRITE_STATUS = {
-    "pending": "por escrever",
-    "written": "escrita",
-    "failed": "FALHOU",
-    "not_written": "não escrita",
-    "interrupted": "interrompida (estado desconhecido)",
-    "empty": "sem linhas",
+    "pending": "pending",
+    "written": "written",
+    "failed": "FAILED",
+    "not_written": "not written",
+    "interrupted": "interrupted (state unknown)",
+    "empty": "no rows",
 }
 
 
 class ReportLimit(Exception):
-    """Atingido o máximo de erros: a carga pára."""
+    """The maximum number of errors was reached: the load stops."""
 
 
 def short_value(value: Any) -> str:
     try:
         text = repr(value)
-    except Exception:  # noqa: BLE001 - objecto de um plugin com __repr__ partido
+    except Exception:  # noqa: BLE001 - a plugin object with a broken __repr__
         text = f"<{type(value).__name__}>"
     return text if len(text) <= VALUE_MAX else text[:VALUE_MAX] + "…"
 
 
 def json_safe(value: Any) -> Any:
-    """Só tipos JSON estritos (json.dumps com allow_nan=False): o relatório tem de poder sair sempre.
+    """Strict JSON types only (json.dumps with allow_nan=False): the report must always be writable.
 
-    Os valores das chaves chegam já convertidos (datetime, Decimal, NaN, struct, map...): passam a texto.
+    Key values arrive already converted (datetime, Decimal, NaN, struct, map...): they become text.
     """
     if value is None or isinstance(value, (bool, str)):
         return value
@@ -153,8 +153,8 @@ def _position(value: Any) -> int | str | None:
 
 
 def location(event: dict) -> str:
-    """'f.json#2 childItems[1]' — ficheiro, documento e linha do evento."""
-    out = event.get("file") or "(sem ficheiro)"
+    """'f.json#2 childItems[1]' — the event's file, document and row."""
+    out = event.get("file") or "(no file)"
     if event.get("document") is not None:
         out += f"#{event['document']}"
     if event.get("row"):
@@ -163,21 +163,21 @@ def location(event: dict) -> str:
 
 
 def describe(event: dict) -> str:
-    """Mensagem completa de um evento (formato das mensagens de erro do motor)."""
+    """Full message of an event (same format as the engine's error messages)."""
     parts = []
     if event.get("table"):
-        parts.append(f"tabela '{event['table']}'")
+        parts.append(f"table '{event['table']}'")
     if event.get("column"):
-        parts.append(f"coluna '{event['column']}'")
+        parts.append(f"column '{event['column']}'")
     if event.get("file"):
-        doc = f" (documento {event['document']})" if event.get("document") is not None else ""
-        parts.append(f"ficheiro '{event['file']}'{doc}")
+        doc = f" (document {event['document']})" if event.get("document") is not None else ""
+        parts.append(f"file '{event['file']}'{doc}")
     if event.get("row"):
-        parts.append(f"linha {event['row']}")
+        parts.append(f"row {event['row']}")
     if event.get("keys"):
-        parts.append(f"chaves {event['keys']}")
+        parts.append(f"keys {event['keys']}")
     if "value" in event:
-        parts.append(f"valor {event['value']}")
+        parts.append(f"value {event['value']}")
     return f"{', '.join(parts)}: {event['message']}" if parts else event["message"]
 
 
@@ -187,20 +187,20 @@ class Report:
         self.max_errors = max_errors
         self.details_path = details_path
         self.groups: dict[tuple, dict[str, Any]] = {}   # (kind, reason, action, table, column) -> {count, examples}
-        self.rejected: dict[Any, dict[str, Any]] = {}    # documento -> {file, document, errors}
+        self.rejected: dict[Any, dict[str, Any]] = {}    # document -> {file, document, errors}
         self.tables: dict[str, dict[str, int]] = {}
         self.documents = 0
         self.errors = 0
         self.interrupted = False
-        self.failure: str | None = None                  # erro ao nível do lote (configuração, limite de erros, escrita)
-        self.write: dict[str, Any] | None = None          # {target, tables: {nome: {status, rows, error, ...}}}; None = nada escrito
+        self.failure: str | None = None                  # batch-level error (configuration, error limit, write)
+        self.write: dict[str, Any] | None = None          # {target, tables: {name: {status, rows, error, ...}}}; None = nothing written
         self._details = None
 
-    # --- registo ----------------------------------------------------------
+    # --- recording ----------------------------------------------------------
     def add(self, kind: str, reason: str, action: str, message: str, *, table: str | None = None,
             column: str | None = None, file: str | None = None, document: int | None = None, row: str | None = None,
             keys: dict | None = None, value: Any = NO_VALUE, doc_key: Any = None) -> bool:
-        """Regista um evento. Devolve True se ficou guardado como exemplo (os primeiros `samples` do grupo)."""
+        """Record an event. Returns True if it was kept as an example (the first `samples` of its group)."""
         key = (kind, reason, action, table, column)
         group = self.groups.get(key)
         if group is None:
@@ -209,8 +209,8 @@ class Report:
         sampled = len(group["examples"]) < self.samples
         file, document = _text(file), _position(document)
         if sampled or self.details_path:
-            # o evento completo só é construído se for guardado; convertido já aqui para o relatório
-            # (JSON, log, resposta da Lambda) nunca falhar depois da escrita
+            # the full event is only built if it is kept; converted here already so the report
+            # (JSON, log, Lambda response) never fails after the write
             event: dict[str, Any] = {"kind": kind, "reason": reason, "action": action, "table": _text(table),
                                      "column": _text(column), "file": file, "document": document, "row": _text(row),
                                      "keys": json_safe(keys), "message": str(message)}
@@ -229,13 +229,13 @@ class Report:
                 rej["errors"] += 1
             if self.max_errors and self.errors >= self.max_errors:
                 self.interrupted = True
-                raise ReportLimit(f"carga interrompida ao fim de {self.errors} erro(s) (--max-errors); nada foi escrito "
-                                  f"e as contagens estão incompletas")
+                raise ReportLimit(f"load stopped after {self.errors} error(s) (--max-errors); nothing was written "
+                                  f"and the counts are incomplete")
         return sampled
 
-    # --- escrita -----------------------------------------------------------
+    # --- write -----------------------------------------------------------
     def start_write(self, target: str, rows: dict[str, int]) -> None:
-        """target: athena | local. Todas as tabelas começam 'pending' (ou 'empty' sem linhas)."""
+        """target: athena | local. Every table starts 'pending' (or 'empty' with no rows)."""
         self.write = {"target": target, "tables": {
             name: {"status": "pending" if n else "empty", "rows": n, "error": None} for name, n in rows.items()}}
 
@@ -243,16 +243,16 @@ class Report:
         self.write["tables"][name].update(status="written", **json_safe(extra))
 
     def write_failed(self, name: str, error: BaseException | str, **extra: Any) -> None:
-        """A tabela `name` falhou: as que faltavam ficam 'not_written' e a carga fica 'failed'."""
+        """Table `name` failed: the remaining ones become 'not_written' and the load becomes 'failed'."""
         tables = self.write["tables"]
         tables[name].update(status="failed", error=str(error), **json_safe(extra))
         for t in tables.values():
             if t["status"] == "pending":
                 t["status"] = "not_written"
-        self.failure = f"escrita falhou na tabela '{name}': {error}"
+        self.failure = f"write failed on table '{name}': {error}"
 
     def write_blocked(self, reason: str) -> None:
-        """A pré-verificação falhou: nenhuma tabela foi escrita."""
+        """The pre-check failed: no table was written."""
         if self.write:
             for t in self.write["tables"].values():
                 if t["status"] == "pending":
@@ -260,21 +260,21 @@ class Report:
         self.failure = reason
 
     def finish_write(self) -> None:
-        """Fecho da escrita (sempre chamado): o que ficou 'pending' foi interrompido a meio."""
+        """End of the write (always called): whatever is still 'pending' was interrupted midway."""
         if not self.write:
             return
         stuck = [n for n, t in self.write["tables"].items() if t["status"] == "pending"]
         for n in stuck:
             self.write["tables"][n]["status"] = "interrupted"
         if stuck and not self.failure:
-            self.failure = f"escrita interrompida antes de terminar: {stuck}"
+            self.failure = f"write interrupted before it finished: {stuck}"
 
     def close(self) -> None:
         if self._details is not None:
             self._details.close()
             self._details = None
 
-    # --- consulta ---------------------------------------------------------
+    # --- queries ---------------------------------------------------------
     @property
     def status(self) -> str:
         if self.failure or self.interrupted:
@@ -292,14 +292,14 @@ class Report:
         return total
 
     def events(self, kind: str | None = None) -> list[dict]:
-        """Eventos guardados em memória (no máximo `samples` por grupo)."""
+        """Events kept in memory (at most `samples` per group)."""
         return [e for key, g in self.groups.items() if kind in (None, key[0]) for e in g["examples"]]
 
     def error_messages(self, limit: int = 10) -> list[str]:
         return [describe(e) for e in self.events("error")[:limit]]
 
     def to_dict(self, examples: int | None = None, max_rejected: int | None = None) -> dict[str, Any]:
-        """Relatório em tipos JSON estritos. `examples`/`max_rejected` limitam o tamanho (ex.: resposta da Lambda)."""
+        """Report in strict JSON types. `examples`/`max_rejected` limit its size (e.g. the Lambda response)."""
         order = {"error": 0, "declared": 1, "warning": 2}
         groups = sorted(self.groups.items(), key=lambda kv: (order.get(kv[0][0], 9), -kv[1]["count"]))
         rejected = list(self.rejected.values())
@@ -318,36 +318,36 @@ class Report:
         }
 
     def render(self, examples: int = 3, max_rejected: int = 20) -> str:
-        """Resumo legível (português) para a linha de comandos e os logs."""
-        lines = [f"Relatório da carga: estado={self.status} | documentos={self.documents} | "
-                 f"rejeitados={len(self.rejected)}"]
+        """Readable summary for the command line and the logs."""
+        lines = [f"Load report: status={self.status} | documents={self.documents} | "
+                 f"rejected={len(self.rejected)}"]
         if self.failure:
-            lines.append(f"  falha: {self.failure}")
+            lines.append(f"  failure: {self.failure}")
         if self.tables:
             parts = []
             for name, t in self.tables.items():
-                extra = f" (+{t['rows_from_rejected_documents']} de documentos rejeitados, não escritas)" \
+                extra = f" (+{t['rows_from_rejected_documents']} from rejected documents, not written)" \
                     if t.get("rows_from_rejected_documents") else ""
                 parts.append(f"{name}={t['rows']}{extra}")
-            lines.append("  linhas: " + ", ".join(parts))
+            lines.append("  rows: " + ", ".join(parts))
         if self.write:
-            lines.append(f"Escrita ({self.write['target']}):")
+            lines.append(f"Write ({self.write['target']}):")
             for name, t in self.write["tables"].items():
-                extra = f" ({t['rows']} linha(s))" if t["status"] == "written" else ""
+                extra = f" ({t['rows']} row(s))" if t["status"] == "written" else ""
                 if t.get("replaced_documents") is not None:
-                    extra += f"; linhas antigas de {t['replaced_documents']} documento(s) substituídas (replace_by)"
+                    extra += f"; old rows of {t['replaced_documents']} document(s) replaced (replace_by)"
                 if t.get("emptied"):
-                    extra += "; tabela esvaziada (overwrite: os documentos do lote não dão linhas)"
+                    extra += "; table emptied (overwrite: the batch's documents produce no rows)"
                 err = f" — {t['error']}" if t.get("error") else ""
                 lines.append(f"  {name}: {WRITE_STATUS.get(t['status'], t['status'])}{extra}{err}")
         else:
-            lines.append("Escrita: nenhuma")
+            lines.append("Write: none")
         if self.rejected:
-            lines.append("Documentos rejeitados (nenhuma linha deles é escrita):")
+            lines.append("Rejected documents (none of their rows is written):")
             for r in list(self.rejected.values())[:max_rejected]:
-                lines.append(f"  {location(r)} — {r['errors']} erro(s)")
+                lines.append(f"  {location(r)} — {r['errors']} error(s)")
             if len(self.rejected) > max_rejected:
-                lines.append(f"  … e mais {len(self.rejected) - max_rejected}")
+                lines.append(f"  … and {len(self.rejected) - max_rejected} more")
         data = self.to_dict()["groups"]
         for kind, title in KIND_TITLES.items():
             groups = [g for g in data if g["kind"] == kind]
@@ -355,10 +355,10 @@ class Report:
                 continue
             lines.append(f"{title}:")
             for g in groups:
-                where = ".".join(x for x in (g["table"], g["column"]) if x) or "(documento)"
+                where = ".".join(x for x in (g["table"], g["column"]) if x) or "(document)"
                 lines.append(f"  {where} — {REASONS.get(g['reason'], g['reason'])} → "
                              f"{ACTIONS.get(g['action'], g['action'])}: {g['count']}")
                 for e in g["examples"][:examples]:
-                    value = f" valor {e['value']}" if "value" in e else ""
+                    value = f" value {e['value']}" if "value" in e else ""
                     lines.append(f"      {location(e)}{value}: {e['message']}")
         return "\n".join(lines)

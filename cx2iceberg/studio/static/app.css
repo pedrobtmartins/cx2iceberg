@@ -13,7 +13,7 @@
   --warn: #7a5200;
   --warn-soft: #f4e7c7;
   --ok: #1f6b3a;
-  --line: #c3ccc8;          /* só em tabelas de dados */
+  --line: #c3ccc8;          /* only in data tables */
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --bar-h: 56px;
@@ -50,7 +50,7 @@ h3 { font-size: 15px; margin: 0 0 6px; font-weight: 650; }
 input[type="text"], input[type="search"], input[type="number"], select, textarea { background: var(--paper); border: 0; padding: 7px 9px; min-width: 0; }
 input[type="search"] { width: 100%; }
 
-/* barra */
+/* bar */
 .bar { height: var(--bar-h); flex: none; display: flex; align-items: center; gap: 24px; padding: 0 20px; background: var(--ink); color: var(--ground); }
 .wordmark { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; white-space: nowrap; }
 .file-state { flex: 1; min-width: 0; display: flex; gap: 14px; align-items: baseline; }
@@ -70,7 +70,7 @@ input[type="search"] { width: 100%; }
 .btn-danger { background: transparent; color: var(--danger); padding-left: 0; }
 .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
 
-/* espaço de trabalho */
+/* workspace */
 .switcher { display: none; }
 .workspace {
   flex: 1; min-height: 0; display: grid;
@@ -88,7 +88,7 @@ input[type="search"] { width: 100%; }
 .pane-head h2 { margin: 0; }
 .pane-head input { max-width: 240px; }
 
-/* catálogo e ficheiros */
+/* catalog and files */
 .catalog, .file-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .catalog > li > button, .file-list button { width: 100%; text-align: left; border: 0; background: transparent; padding: 6px 8px; cursor: pointer; font-size: 14px; overflow-wrap: anywhere; transition: background-color 120ms ease; }
 .catalog > li > button:hover, .file-list button:hover { background: var(--surface-2); }
@@ -108,7 +108,7 @@ input[type="search"] { width: 100%; }
 details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10px 0 8px; }
 #pasted { width: 100%; min-height: 120px; resize: vertical; font: 13px/1.45 var(--mono); }
 
-/* campos */
+/* fields */
 .fields ul { list-style: none; margin: 0; padding: 0; }
 .fields ul ul { padding-left: 16px; }
 .group { margin: 10px 0 4px; }
@@ -127,7 +127,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
 .field.used .name::before { content: "✓ "; color: var(--accent); font-weight: 700; }
 .pick-banner { background: var(--accent-soft); padding: 8px 12px; font-size: 14px; display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 
-/* tabela (construtor) */
+/* table (builder) */
 .table-tabs { display: flex; gap: 2px; overflow-x: auto; margin-bottom: 12px; }
 .table-tabs button { border: 0; background: var(--surface); padding: 6px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
 .table-tabs button[aria-selected="true"] { background: var(--ink); color: var(--ground); }
@@ -162,7 +162,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
 .checkset input[type="number"] { width: 90px; }
 .advanced-note { background: var(--warn-soft); padding: 8px 12px; font-size: 14px; }
 
-/* resultado */
+/* result */
 .result-head { display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
 .summary { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.015em; }
 .validation { margin: 0; font-size: 14px; }
@@ -187,7 +187,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
 .grid td.nested pre { margin: 6px 0 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; max-width: 420px; }
 .grid tbody tr:hover { background: var(--accent-soft); }
 
-/* avançado */
+/* advanced */
 #adv-text { flex: 1; min-height: 200px; resize: none; font: 13px/20px var(--mono); padding: 12px 14px; tab-size: 2; white-space: pre; background: var(--ground); }
 .adv-error { background: var(--danger-soft); color: var(--danger); padding: 8px 12px; margin: 0 0 8px; }
 
@@ -200,7 +200,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
   .editor .row { grid-template-columns: 1fr; gap: 4px; }
 }
 
-/* telemóvel e tablet estreito: um painel de cada vez */
+/* phone and narrow tablet: one pane at a time */
 @media (max-width: 900px) {
   body { font-size: 16px; }
   .bar { gap: 12px; padding: 0 12px; }
@@ -228,7 +228,7 @@ details summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 10
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
-/* relatório da carga (pré-visualização) */
+/* load report (preview) */
 .report { flex: none; max-height: 40vh; overflow: auto; background: var(--paper); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
 .report h2 { margin: 0 0 8px; font-size: 16px; }
 .report h3 { margin: 10px 0 2px; font-size: 14px; }
