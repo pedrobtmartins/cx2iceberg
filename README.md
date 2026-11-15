@@ -638,6 +638,8 @@ print(engine.report.render())        # or engine.report.to_dict()
 * The pre-check compares column types; changes to the partition spec of an existing table are not detected.
 * It processes the documents in memory. For very large volumes, call it in batches (e.g. one file or S3 prefix per run).
 
+The planned fixes for several of these are in the [roadmap](ROADMAP.md).
+
 ## Tests
 
 ```bash
